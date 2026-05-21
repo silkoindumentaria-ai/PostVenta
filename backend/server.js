@@ -192,8 +192,9 @@ app.post('/api/tn/sessions', async (req, res) => {
     saveDb(db);
     res.json({ ...session, total_contacts: seenIds.size, contacted_count: 0 });
   } catch (err) {
-    console.error('tn session:', err.response?.data || err.message);
-    res.status(500).json({ error: err.response?.data?.description || err.message });
+    const detail = err.response?.data?.description || err.response?.data?.message || err.message;
+    console.error('tn session error:', err.response?.status, detail);
+    res.status(500).json({ error: detail });
   }
 });
 
