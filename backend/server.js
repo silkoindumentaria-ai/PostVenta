@@ -37,6 +37,31 @@ const gm = axios.create({
   timeout: 30000,
 });
 
+// ── Tienda Nube client ────────────────────────────────────────────────────────
+const tn = axios.create({
+  baseURL: `https://api.tiendanube.com/v1/${process.env.TN_STORE_ID}`,
+  headers: {
+    Authentication: `bearer ${process.env.TN_ACCESS_TOKEN}`,
+    'User-Agent': 'SilkoPostVenta (gabrieldecima1028@gmail.com)',
+    'Content-Type': 'application/json',
+  },
+  timeout: 30000,
+});
+
+async function fetchAllTNOrders(params) {
+  const all = [];
+  let page = 1;
+  while (true) {
+    const { data } = await tn.get('/orders', {
+      params: { ...params, per_page: 200, page },
+    });
+    all.push(...data);
+    if (data.length < 200 || page >= 50) break;
+    page++;
+  }
+  return all;
+}
+
 async function fetchAllSales(params) {
   const all = [];
   let page = 1;
@@ -98,6 +123,79 @@ async function enrichPhonesFromClients(sales) {
     return { ...s, client_phone: phoneMap[s.client_id] || null };
   });
 }
+
+// ── Tienda Nube sessions ──────────────────────────────────────────────────────
+app.post('/api/tn/sessions', async (req, res) => {
+  const { name, date_from, date_to, whatsapp_message } = req.body;
+
+  if (!name?.trim() || !date_from || !date_to) {
+    return res.status(400).json({ error: 'Nombre, fecha_desde y fecha_hasta son requeridos.' });
+  }
+  if (date_from > date_to) {
+    return res.status(400).json({ error: 'La fecha desde debe ser anterior a la fecha hasta.' });
+  }
+
+  try {
+    const orders = await fetchAllTNOrders({
+      payment_status: 'paid',
+      created_at_min: date_from,
+      created_at_max: date_to + 'T23:59:59+0000',
+      fields: 'id,number,created_at,contact_name,contact_phone,contact_email,customer',
+    });
+
+    const valid = orders.filter(o => o.contact_name?.trim());
+
+    if (valid.length === 0) {
+      return res.status(404).json({ error: 'No se encontraron órdenes pagas en ese período.' });
+    }
+
+    const msg = whatsapp_message?.trim() ||
+      'Hola [Nombre], ¿cómo estás? Nos contactamos desde Silko para consultarte sobre tu reciente compra.';
+
+    const db = loadDb();
+
+    const session = {
+      id: db.nextSessionId++,
+      name: name.trim(),
+      source: 'tn',
+      channel_id: null,
+      channel_name: 'Tienda Nube',
+      store_id: null,
+      store_name: null,
+      date_from,
+      date_to,
+      whatsapp_message: msg,
+      status: 'active',
+      created_at: new Date().toISOString(),
+    };
+    db.sessions.push(session);
+
+    const seenIds = new Set();
+    for (const o of valid) {
+      if (seenIds.has(o.id)) continue;
+      seenIds.add(o.id);
+      const phone = (o.contact_phone || o.customer?.phone || '').trim() || null;
+      const dateOnly = o.created_at ? o.created_at.split('T')[0] : date_from;
+      db.contacts.push({
+        id: db.nextContactId++,
+        session_id: session.id,
+        sale_id: o.id,
+        client_id: o.customer?.id || null,
+        client_name: o.contact_name.trim(),
+        client_phone: phone,
+        date_sale: dateOnly,
+        contacted: false,
+        contacted_at: null,
+      });
+    }
+
+    saveDb(db);
+    res.json({ ...session, total_contacts: seenIds.size, contacted_count: 0 });
+  } catch (err) {
+    console.error('tn session:', err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data?.description || err.message });
+  }
+});
 
 // ── Channels & Stores ─────────────────────────────────────────────────────────
 app.get('/api/channels-stores', async (req, res) => {
@@ -179,6 +277,7 @@ app.post('/api/sessions', async (req, res) => {
     const session = {
       id: db.nextSessionId++,
       name: name.trim(),
+      source: 'gm',
       channel_id: channel_id || null,
       channel_name: valid[0]?.channel || null,
       store_id: store_id || null,

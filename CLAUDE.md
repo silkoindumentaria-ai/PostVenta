@@ -301,6 +301,64 @@ cmd = "node backend/server.js"
 
 ---
 
+## Tienda Nube — integración
+
+**Credenciales (en Railway env vars y backend/.env):**
+- `TN_ACCESS_TOKEN` — bearer token
+- `TN_STORE_ID` — 1406056
+
+**Base URL:** `https://api.tiendanube.com/v1/{TN_STORE_ID}`  
+**Auth header:** `Authentication: bearer {TN_ACCESS_TOKEN}`  
+**User-Agent:** `SilkoPostVenta (gabrieldecima1028@gmail.com)` — requerido por TN
+
+### Endpoint usado: `GET /orders`
+
+Parámetros:
+| Param | Valor fijo/variable |
+|---|---|
+| `payment_status` | `paid` (solo órdenes pagas) |
+| `created_at_min` | date_from del formulario |
+| `created_at_max` | date_to + `T23:59:59+0000` |
+| `per_page` | 200 (máximo) |
+| `page` | paginación |
+| `fields` | `id,number,created_at,contact_name,contact_phone,contact_email,customer` |
+
+**La respuesta es un array directo** (no `{data: [...]}` como GM). Paginación: si el array tiene < 200 items, es la última página.
+
+Campos relevantes de cada orden:
+```json
+{
+  "id": 1976331980,
+  "number": 18983,
+  "created_at": "2026-05-21T17:06:20+0000",
+  "contact_name": "Morgan Pereyra",
+  "contact_phone": "+543515931246",
+  "contact_email": "morganpereyra2@gmail.com",
+  "customer": { "id": 216081176, "phone": "+543515931246" }
+}
+```
+
+**Los teléfonos de TN ya vienen con código de país** (`+549...`), no necesitan normalización adicional.
+
+### Endpoint backend: `POST /api/tn/sessions`
+
+Body igual a GM pero sin `channel_id` ni `store_id`:
+```json
+{ "name": "...", "date_from": "2026-05-01", "date_to": "2026-05-21", "whatsapp_message": "..." }
+```
+
+Las sesiones TN se guardan con `source: "tn"` en el JSON.
+
+### UI — selector de fuente
+
+En el header hay dos botones: **Gestion Moda** (verde) y **Tienda Nube** (violeta). Cada uno muestra sus propias pestañas de sesiones. El estado `activeSource` en `App.jsx` controla cuál está visible. `activeId` es un objeto `{ gm: id|null, tn: id|null }` para recordar la pestaña activa de cada fuente independientemente.
+
+El modal `NewSessionModal` recibe `source` como prop y adapta:
+- `source === 'tn'`: sin dropdowns de canal/tienda, llama a `POST /api/tn/sessions`
+- `source === 'gm'`: comportamiento original
+
+---
+
 ## Decisiones de diseño importantes
 
 - **Sin SQLite/base de datos nativa:** se usa JSON file para evitar compilación nativa (`better-sqlite3` no tiene binarios para Node 24 en Windows sin Visual Studio).
