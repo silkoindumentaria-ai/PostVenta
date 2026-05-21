@@ -1,0 +1,11 @@
+[phases.install]
+cmds = [
+  "npm --prefix backend install --omit=dev",
+  "npm --prefix frontend install"
+]
+
+[phases.build]
+cmds = ["npm --prefix frontend run build"]
+
+[start]
+cmd = "node backend/server.js"
