@@ -80,11 +80,34 @@ async function fetchAllSales(params) {
 async function fetchClientPhone(clientId, clientName) {
   try {
     const { data } = await gm.get('/clientes', {
-      params: { q: clientName, per_page: 10 },
+      params: { q: clientName, per_page: 50 },
     });
-    const match = data.data.find(c => c.id === clientId);
-    if (!match) return null;
-    return (match.cellphone_number || match.phone_number || '').trim() || null;
+    const results = data.data || [];
+
+    // Primary: exact ID match
+    const match = results.find(c => c.id === clientId);
+    if (match) {
+      return (match.cellphone_number || match.phone_number || '').trim() || null;
+    }
+
+    // Fallback: single result with a phone (name search likely unambiguous)
+    if (results.length === 1) {
+      return (results[0].cellphone_number || results[0].phone_number || '').trim() || null;
+    }
+
+    // Fallback: try searching by ID directly via first-name only if full name failed
+    const firstName = clientName.split(' ')[0];
+    if (firstName && firstName !== clientName) {
+      const { data: data2 } = await gm.get('/clientes', {
+        params: { q: firstName, per_page: 50 },
+      });
+      const match2 = (data2.data || []).find(c => c.id === clientId);
+      if (match2) {
+        return (match2.cellphone_number || match2.phone_number || '').trim() || null;
+      }
+    }
+
+    return null;
   } catch {
     return null;
   }
