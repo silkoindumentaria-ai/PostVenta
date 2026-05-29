@@ -30,9 +30,24 @@ function buildWhatsAppUrl(phone, message, clientName) {
   return `https://wa.me/${formatted}?text=${encodeURIComponent(text)}`
 }
 
-export default function ContactsTable({ session, contacts, onToggle, onFinish }) {
+export default function ContactsTable({ session, contacts, onToggle, onFinish, onRefreshPhones }) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshResult, setRefreshResult] = useState(null)
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    setRefreshResult(null)
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/refresh-phones`, { method: 'POST' })
+      const data = await res.json()
+      setRefreshResult(data.updated)
+      if (onRefreshPhones) onRefreshPhones()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const total = contacts.length
   const done = contacts.filter(c => c.contacted).length
@@ -82,7 +97,22 @@ export default function ContactsTable({ session, contacts, onToggle, onFinish })
           </span>
           <span className="progress-pct">{pct}%</span>
           {noPhone > 0 && (
-            <span className="progress-warn">⚠ {noPhone} sin teléfono</span>
+            <span className="progress-warn">
+              ⚠ {noPhone} sin teléfono
+              {session.source !== 'tn' && (
+                <button
+                  className="btn-refresh-phones"
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  title="Buscar teléfonos faltantes en Gestion Moda"
+                >
+                  {refreshing ? 'Buscando...' : 'Refrescar teléfonos'}
+                </button>
+              )}
+              {refreshResult !== null && (
+                <span className="refresh-ok">✓ {refreshResult} actualizados</span>
+              )}
+            </span>
           )}
         </div>
         <div className="progress-bar-track">

@@ -358,6 +358,45 @@ app.get('/api/sessions/:id/contacts', (req, res) => {
   res.json({ session, contacts });
 });
 
+app.post('/api/sessions/:id/refresh-phones', async (req, res) => {
+  const db = loadDb();
+  const id = +req.params.id;
+  const session = db.sessions.find(s => s.id === id);
+  if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
+
+  const noPhone = db.contacts.filter(c => c.session_id === id && !c.client_phone && c.client_name);
+
+  if (noPhone.length === 0) return res.json({ updated: 0 });
+
+  const uniqueClients = Object.values(
+    Object.fromEntries(noPhone.map(c => [c.client_name, { id: c.client_id, name: c.client_name }]))
+  );
+
+  console.log(`Refrescando teléfonos: ${uniqueClients.length} clientes sin teléfono en sesión ${id}...`);
+
+  const phoneMap = {};
+  const BATCH = 10;
+  for (let i = 0; i < uniqueClients.length; i += BATCH) {
+    const chunk = uniqueClients.slice(i, i + BATCH);
+    const results = await Promise.all(
+      chunk.map(async ({ id: cid, name }) => ({ name, phone: await fetchClientPhone(cid, name) }))
+    );
+    for (const { name, phone } of results) {
+      if (phone) phoneMap[name] = phone;
+    }
+  }
+
+  let updated = 0;
+  for (const contact of db.contacts) {
+    if (contact.session_id !== id || contact.client_phone) continue;
+    const phone = phoneMap[contact.client_name] || null;
+    if (phone) { contact.client_phone = phone; updated++; }
+  }
+
+  saveDb(db);
+  res.json({ updated, total_sin_telefono: noPhone.length });
+});
+
 app.patch('/api/sessions/:id/finish', (req, res) => {
   const db = loadDb();
   const id = +req.params.id;

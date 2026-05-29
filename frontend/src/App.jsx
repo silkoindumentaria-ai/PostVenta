@@ -52,6 +52,13 @@ export default function App() {
     setShowModal(false)
   }
 
+  const handleRefreshPhones = useCallback(async () => {
+    if (!currentActiveId) return
+    const res = await fetch(`/api/sessions/${currentActiveId}/contacts`)
+    const data = await res.json()
+    setSessionData(data)
+  }, [currentActiveId])
+
   const handleFinishSession = async (sessionId) => {
     if (!window.confirm('¿Finalizar esta sesión de postventa? Se archivará y no aparecerá más en las pestañas.')) return
     await fetch(`/api/sessions/${sessionId}/finish`, { method: 'PATCH' })
@@ -155,6 +162,7 @@ export default function App() {
             contacts={sessionData.contacts}
             onToggle={handleContactToggle}
             onFinish={() => handleFinishSession(currentActiveId)}
+            onRefreshPhones={handleRefreshPhones}
           />
         )}
       </main>
