@@ -116,7 +116,7 @@ async function fetchClientPhone(clientId, clientName) {
 // For sales missing a phone, search /clientes by name and verify by ID (batched, 10 at a time)
 async function enrichPhonesFromClients(sales) {
   const noPhone = sales.filter(
-    s => !(s.client?.phone_number || s.client_phone || '').trim() && s.client_id && s.client_name
+    s => !(s.client?.cellphone_number || s.client?.phone_number || s.client_phone || '').trim() && s.client_id && s.client_name
   );
 
   if (noPhone.length === 0) return sales;
@@ -141,7 +141,7 @@ async function enrichPhonesFromClients(sales) {
   }
 
   return sales.map(s => {
-    const existing = (s.client?.phone_number || s.client_phone || '').trim();
+    const existing = (s.client?.cellphone_number || s.client?.phone_number || s.client_phone || '').trim();
     if (existing) return s;
     return { ...s, client_phone: phoneMap[s.client_id] || null };
   });
@@ -319,7 +319,7 @@ app.post('/api/sessions', async (req, res) => {
     for (const s of valid) {
       if (seenSaleIds.has(s.id)) continue;
       seenSaleIds.add(s.id);
-      const phone = (s.client?.phone_number || s.client_phone || '').trim() || null;
+      const phone = (s.client?.cellphone_number || s.client?.phone_number || s.client_phone || '').trim() || null;
       db.contacts.push({
         id: db.nextContactId++,
         session_id: session.id,
