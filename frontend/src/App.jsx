@@ -70,11 +70,11 @@ export default function App() {
     }
   }
 
-  const handleContactToggle = async (contactId, contacted) => {
+  const handleContactToggle = async (contactId, contacted, message) => {
     await fetch(`/api/contacts/${contactId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contacted }),
+      body: JSON.stringify({ contacted, message }),
     })
     setSessionData(prev => {
       if (!prev) return prev

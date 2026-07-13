@@ -1,0 +1,308 @@
+[
+  {
+    "id": 1995253375,
+    "token": "7ba49521c76f170e3050cb6e512aa5d5d7f7784a",
+    "store_id": 1406056,
+    "contact_email": "natusam86@gmail.com",
+    "contact_name": "Natalia Sampietro",
+    "contact_phone": "+541130776784",
+    "contact_identification": "32232204",
+    "shipping_min_days": 5,
+    "shipping_max_days": 10,
+    "billing_name": "Natalia",
+    "billing_phone": "+541130776784",
+    "billing_address": "Necochea",
+    "billing_number": "4796",
+    "billing_floor": "",
+    "billing_locality": "Tablada",
+    "billing_zipcode": "1766",
+    "billing_city": "La Matanza",
+    "billing_province": "Buenos Aires",
+    "billing_country": "AR",
+    "billing_customer_type": null,
+    "billing_business_name": null,
+    "billing_trade_name": null,
+    "billing_state_registration": null,
+    "billing_fiscal_regime": null,
+    "billing_business_activity": null,
+    "billing_invoice_use": null,
+    "billing_document_type": null,
+    "shipping_cost_owner": "4980.00",
+    "shipping_cost_customer": "4980.00",
+    "coupon": [],
+    "promotional_discount": {
+      "id": 106416890,
+      "store_id": 1406056,
+      "order_id": 1995253375,
+      "created_at": "2026-06-14T04:10:30-03:00",
+      "total_discount_amount": "22500.00",
+      "contents": [
+        {
+          "id": 3296869100,
+          "discount_script_type": "%off",
+          "scope_type": "products",
+          "scope_value_id": 349772631,
+          "scope_value_name": "Edicion Mundial! 5 NEGROS + 2 de REGALO!",
+          "quantity": 1,
+          "original_price": 75000,
+          "final_price": 52500,
+          "discount_amount": 22500,
+          "total_discount_amount": 22500,
+          "begin_date": null,
+          "end_date": null,
+          "buy": null,
+          "pay": null
+        }
+      ],
+      "promotions_applied": []
+    },
+    "subtotal": "52500.00",
+    "subtotal_without_taxes": "43388.43",
+    "discount": "0.00",
+    "discount_coupon": null,
+    "discount_gateway": "0.00",
+    "total": "57480.00",
+    "total_usd": "40.24",
+    "checkout_enabled": true,
+    "checkout_enabled_validation_messages": [],
+    "checkout_bot_suspect": false,
+    "checkout_app_blocked": false,
+    "weight": "1.000",
+    "currency": "ARS",
+    "language": "es",
+    "gateway": "mercado-pago",
+    "gateway_id": "164128230182",
+    "gateway_name": "Mercado Pago",
+    "shipping": "table",
+    "shipping_option": "HOY Envio a Domicilio 50% BONIFICADO. Correo Andreani. (ANTES $9960)",
+    "shipping_option_code": "table_7470905",
+    "shipping_option_reference": null,
+    "shipping_pickup_details": null,
+    "shipping_tracking_number": "360003004664330",
+    "shipping_tracking_url": null,
+    "shipping_store_branch_name": null,
+    "shipping_store_branch_extra": null,
+    "shipping_pickup_type": "ship",
+    "shipping_suboption": [],
+    "extra": {},
+    "storefront": "mobile",
+    "note": "",
+    "owner_note": null,
+    "created_at": "2026-06-14T20:56:51+0000",
+    "updated_at": "2026-06-15T13:44:42+0000",
+    "completed_at": {
+      "date": "2026-06-14 20:56:51.000000",
+      "timezone_type": 3,
+      "timezone": "UTC"
+    },
+    "next_action": "close",
+    "payment_details": {
+      "method": "credit_card",
+      "credit_card_company": null,
+      "installments": 1
+    },
+    "attributes": [],
+    "free_shipping_config": {
+      "min_price_free_shipping": {
+        "min_price": {
+          "value": 40000,
+          "currency": "ARS"
+        },
+        "enable": 1
+      },
+      "cart_has_free_shipping": true
+    },
+    "payment_count": 1,
+    "payment_status": "paid",
+    "order_origin": null,
+    "same_billing_and_shipping_address": true,
+    "is_subscription": false,
+    "is_subscription_initial": false,
+    "total_paid": "57480.00",
+    "customer": {
+      "id": 282813486,
+      "name": "Natalia Sampietro",
+      "email": "natusam86@gmail.com",
+      "identification": "32232204",
+      "phone": "+541130776784",
+      "note": null,
+      "default_address": {
+        "address": "Necochea",
+        "city": "La Matanza",
+        "country": "AR",
+        "created_at": "2026-06-14T20:56:51+0000",
+        "default": true,
+        "floor": "",
+        "id": 226530401,
+        "locality": "Tablada",
+        "name": "Natalia Sampietro",
+        "number": "4796",
+        "phone": "+541130776784",
+        "province": "Buenos Aires",
+        "updated_at": "2026-06-14T20:56:51+0000",
+        "zipcode": "1766"
+      },
+      "addresses": [
+        {
+          "address": "Necochea",
+          "city": "La Matanza",
+          "country": "AR",
+          "created_at": "2026-06-14T20:56:51+0000",
+          "default": true,
+          "floor": "",
+          "id": 226530401,
+          "locality": "Tablada",
+          "name": "Natalia Sampietro",
+          "number": "4796",
+          "phone": "+541130776784",
+          "province": "Buenos Aires",
+          "updated_at": "2026-06-14T20:56:51+0000",
+          "zipcode": "1766"
+        }
+      ],
+      "billing_name": "Natalia",
+      "billing_phone": "+541130776784",
+      "billing_address": "Necochea",
+      "billing_number": "4796",
+      "billing_floor": "",
+      "billing_locality": "Tablada",
+      "billing_zipcode": "1766",
+      "billing_city": "La Matanza",
+      "billing_province": "Buenos Aires",
+      "billing_country": "AR",
+      "extra": {},
+      "total_spent": "0.00",
+      "total_spent_currency": "ARS",
+      "last_order_id": 1995253375,
+      "active": false,
+      "first_interaction": "2026-06-14T20:56:51+0000",
+      "created_at": "2026-06-14T20:56:51+0000",
+      "updated_at": "2026-06-14T20:56:52+0000",
+      "customer_type": "",
+      "business_name": "",
+      "trade_name": "",
+      "state_registration": "",
+      "fiscal_regime": "",
+      "invoice_use": "",
+      "document_type": "",
+      "business_activity": "",
+      "accepts_marketing": true,
+      "accepts_marketing_updated_at": "2026-06-14T20:56:51+0000"
+    },
+    "products": [
+      {
+        "id": 3296869100,
+        "depth": "15.00",
+        "height": "10.00",
+        "name": "Edicion Mundial! 5 NEGROS + 2 de REGALO! (Talle XXXL: Talle (54 a 56 de pantalón))",
+        "name_without_variants": "Edicion Mundial! 5 NEGROS + 2 de REGALO!",
+        "price": "52500.00",
+        "compare_at_price": "75000.00",
+        "product_id": 349772631,
+        "image": {
+          "id": 1213073076,
+          "product_id": 349772631,
+          "src": "https://acdn-us.mitiendanube.com/stores/001/406/056/products/edicion-mundial-33bd19f4d53df660b217811310157566-1024-1024.png",
+          "position": 1,
+          "alt": [],
+          "height": 1280,
+          "width": 1024,
+          "thumbnails_generated": 1,
+          "created_at": "2026-06-10T22:37:02+0000",
+          "updated_at": "2026-06-10T22:37:02+0000"
+        },
+        "quantity": 1,
+        "free_shipping": false,
+        "weight": "1.000",
+        "width": "10.00",
+        "variant_id": 1541363611,
+        "variant_values": [
+          "Talle XXXL: Talle (54 a 56 de pantalón)"
+        ],
+        "properties": [],
+        "sku": "",
+        "barcode": null,
+        "has_promotional_price": false,
+        "promotions": {
+          "percentage_off": 30
+        },
+        "is_gift": false,
+        "cost": null
+      }
+    ],
+    "customer_visit": {
+      "created_at": "2026-06-14T04:10:04+0000",
+      "landing_page": "https://www.silko.com.ar/",
+      "utm_parameters": {
+        "utm_campaign": null,
+        "utm_content": null,
+        "utm_medium": null,
+        "utm_source": null,
+        "utm_term": null
+      }
+    },
+    "coupon_id": null,
+    "fulfillments": [
+      {
+        "id": "01KV3YRJ2J0H8ZN1F4FEKCSFB9",
+        "number": "1",
+        "assigned_location": {
+          "location_id": "01GR9JREZBZHX6VMMSVFPNRSRX",
+          "name": "Silko Casa Central"
+        },
+        "status": "DISPATCHED",
+        "shipping": {
+          "type": "ship",
+          "extras": {
+            "shippable": true
+          },
+          "carrier": {
+            "name": "HOY Envio a Domicilio 50% BONIFICADO. Correo Andreani. (ANTES $9960)"
+          },
+          "option": {
+            "name": "HOY Envio a Domicilio 50% BONIFICADO. Correo Andreani. (ANTES $9960)"
+          }
+        },
+        "tracking_info": {
+          "code": "360003004664330",
+          "url": ""
+        }
+      }
+    ],
+    "number": 19492,
+    "cancel_reason": null,
+    "cancelled_at": null,
+    "closed_at": null,
+    "read_at": null,
+    "status": "open",
+    "gateway_link": "https://www.mercadopago.com.ar/activities/1?q=164128230182",
+    "has_shippable_products": true,
+    "shipping_carrier_name": null,
+    "shipping_address": {
+      "address": "Necochea",
+      "city": "La Matanza",
+      "country": "AR",
+      "created_at": "2026-06-14T04:10:29+0000",
+      "default": false,
+      "floor": "",
+      "id": 0,
+      "locality": "Tablada",
+      "name": "Natalia Sampietro",
+      "number": "4796",
+      "phone": "+541130776784",
+      "province": "Buenos Aires",
+      "updated_at": "2026-06-15T13:44:42+0000",
+      "zipcode": "1766",
+      "customs": null
+    },
+    "shipping_status": "shipped",
+    "shipped_at": "2026-06-15T13:44:41+0000",
+    "paid_at": "2026-06-14T20:56:52+0000",
+    "landing_url": "https://www.silko.com.ar/",
+    "client_details": {
+      "browser_ip": "186.22.225.159",
+      "user_agent": "Mozilla/5.0 (Linux; Android 12; SM-A725M Build/SP1A.210812.016) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/149.0.7827.83 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/564.0.0.48.74;IABMV/1;]"
+    },
+    "app_id": null
+  }
+]

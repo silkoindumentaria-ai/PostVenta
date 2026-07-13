@@ -13,12 +13,30 @@ app.use(express.json());
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'postventa.json');
 
 function loadDb() {
+  let db = { sessions: [], contacts: [], contactLogs: [], nextSessionId: 1, nextContactId: 1, nextLogId: 1 };
   if (fs.existsSync(DB_PATH)) {
     try {
-      return JSON.parse(fs.readFileSync(DB_PATH, 'utf-8'));
+      db = { ...db, ...JSON.parse(fs.readFileSync(DB_PATH, 'utf-8')) };
     } catch { /* corrupt file → start fresh */ }
   }
-  return { sessions: [], contacts: [], nextSessionId: 1, nextContactId: 1 };
+  if (!Array.isArray(db.contactLogs)) db.contactLogs = [];
+  if (typeof db.nextLogId !== 'number') db.nextLogId = 1;
+  return db;
+}
+
+// Normaliza un teléfono argentino al formato 549XXXXXXXXXX (misma lógica que
+// formatPhoneForWhatsApp en frontend/src/components/ContactsTable.jsx) para
+// poder matchear el mismo cliente real entre sesiones y fuentes distintas.
+function normalizePhone(raw) {
+  if (!raw) return null;
+  let d = String(raw).replace(/\D/g, '');
+  if (!d) return null;
+  if (d.startsWith('0') && d.length > 10) d = d.slice(1);
+  if (d.startsWith('54')) {
+    if (!d.startsWith('549') && d.length >= 12) d = '549' + d.slice(2);
+    return d;
+  }
+  return '549' + d;
 }
 
 function saveDb(db) {
@@ -413,10 +431,53 @@ app.patch('/api/contacts/:id', (req, res) => {
   const id = +req.params.id;
   const contact = db.contacts.find(c => c.id === id);
   if (!contact) return res.status(404).json({ error: 'Contacto no encontrado' });
-  contact.contacted = !!req.body.contacted;
-  contact.contacted_at = contact.contacted ? new Date().toISOString() : null;
+
+  const contacted = !!req.body.contacted;
+  contact.contacted = contacted;
+  contact.contacted_at = contacted ? new Date().toISOString() : null;
+
+  if (contacted) {
+    const session = db.sessions.find(s => s.id === contact.session_id);
+    db.contactLogs.push({
+      id: db.nextLogId++,
+      contact_id: contact.id,
+      session_id: contact.session_id,
+      session_name: session?.name || '(sesión eliminada)',
+      source: session?.source || 'gm',
+      client_id: contact.client_id,
+      client_name: contact.client_name,
+      client_phone_raw: contact.client_phone,
+      client_phone_normalized: normalizePhone(contact.client_phone),
+      message: (req.body.message || '').trim(),
+      contacted_at: contact.contacted_at,
+    });
+  }
+  // Destildar solo cambia el estado actual; el historial en contactLogs nunca se borra.
+
   saveDb(db);
   res.json(contact);
+});
+
+app.get('/api/contacts/:id/history', (req, res) => {
+  const db = loadDb();
+  const id = +req.params.id;
+  const contact = db.contacts.find(c => c.id === id);
+  if (!contact) return res.status(404).json({ error: 'Contacto no encontrado' });
+
+  const normalizedPhone = normalizePhone(contact.client_phone);
+  let entries;
+  if (normalizedPhone) {
+    entries = db.contactLogs.filter(l => l.client_phone_normalized === normalizedPhone);
+  } else if (contact.client_id) {
+    const source = db.sessions.find(s => s.id === contact.session_id)?.source || 'gm';
+    entries = db.contactLogs.filter(l => l.client_id === contact.client_id && l.source === source);
+  } else {
+    entries = db.contactLogs.filter(l => l.contact_id === contact.id);
+  }
+
+  entries = entries.slice().sort((a, b) => new Date(b.contacted_at) - new Date(a.contacted_at));
+
+  res.json({ client_name: contact.client_name, client_phone: contact.client_phone, entries });
 });
 
 // ── Static (producción) ───────────────────────────────────────────────────────

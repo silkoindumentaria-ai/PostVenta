@@ -616,6 +616,43 @@
 
 .modal-close-btn:hover { color: var(--text); }
 
+.modal-history-name { font-size: 14px; font-weight: 600; color: var(--text-light); }
+
+.history-entry {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.history-entry:last-child { border-bottom: none; }
+
+.history-entry-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.history-entry-date { font-size: 12px; color: var(--text-muted); }
+
+.history-entry-message {
+  font-size: 13.5px;
+  color: var(--text);
+  font-style: italic;
+}
+
+.history-empty { color: var(--text-light); font-size: 13.5px; }
+
+.btn-history-icon {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.btn-history-icon:hover { background: #f1f5f9; }
+
 .modal-form { padding: 0 24px 24px; }
 
 .form-group {

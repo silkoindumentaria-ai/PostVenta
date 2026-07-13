@@ -63,7 +63,7 @@ export default function NewSessionModal({ source = 'gm', onClose, onCreated }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => !creating && e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay">
       <div className="modal">
         <div className="modal-header">
           <div className="modal-title-area">

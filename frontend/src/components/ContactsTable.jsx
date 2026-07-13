@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import HistoryModal from './HistoryModal.jsx'
 
 function formatDate(str) {
   if (!str) return '—'
@@ -22,12 +23,15 @@ function formatPhoneForWhatsApp(raw) {
   return '549' + d
 }
 
+function buildMessageText(message, clientName) {
+  const firstName = clientName?.split(' ')[0] || 'cliente'
+  return message.replace(/\[Nombre\]/gi, firstName)
+}
+
 function buildWhatsAppUrl(phone, message, clientName) {
   const formatted = formatPhoneForWhatsApp(phone)
   if (!formatted) return null
-  const firstName = clientName?.split(' ')[0] || 'cliente'
-  const text = message.replace(/\[Nombre\]/gi, firstName)
-  return `https://wa.me/${formatted}?text=${encodeURIComponent(text)}`
+  return `https://wa.me/${formatted}?text=${encodeURIComponent(buildMessageText(message, clientName))}`
 }
 
 export default function ContactsTable({ session, contacts, onToggle, onFinish, onRefreshPhones }) {
@@ -35,6 +39,7 @@ export default function ContactsTable({ session, contacts, onToggle, onFinish, o
   const [filter, setFilter] = useState('all')
   const [refreshing, setRefreshing] = useState(false)
   const [refreshResult, setRefreshResult] = useState(null)
+  const [historyContactId, setHistoryContactId] = useState(null)
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -164,18 +169,20 @@ export default function ContactsTable({ session, contacts, onToggle, onFinish, o
               <th>Teléfono</th>
               <th>WhatsApp</th>
               <th>Contactado</th>
+              <th>Historial</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={5} className="ct-empty-row">
+                <td colSpan={6} className="ct-empty-row">
                   Sin resultados para la búsqueda actual
                 </td>
               </tr>
             )}
             {filtered.map(c => {
               const waUrl = buildWhatsAppUrl(c.client_phone, session.whatsapp_message, c.client_name)
+              const finalMessage = buildMessageText(session.whatsapp_message, c.client_name)
               return (
                 <tr key={c.id} className={c.contacted ? 'row-done' : ''}>
                   <td className="td-name">
@@ -211,10 +218,20 @@ export default function ContactsTable({ session, contacts, onToggle, onFinish, o
                       <input
                         type="checkbox"
                         checked={!!c.contacted}
-                        onChange={e => onToggle(c.id, e.target.checked)}
+                        onChange={e => onToggle(c.id, e.target.checked, e.target.checked ? finalMessage : null)}
                       />
                       <span className="check-box" />
                     </label>
+                  </td>
+                  <td className="td-history">
+                    <button
+                      type="button"
+                      className="btn-history-icon"
+                      title="Ver historial de contacto"
+                      onClick={() => setHistoryContactId(c.id)}
+                    >
+                      🕑
+                    </button>
                   </td>
                 </tr>
               )
@@ -226,6 +243,10 @@ export default function ContactsTable({ session, contacts, onToggle, onFinish, o
       <div className="ct-footer">
         Mostrando {filtered.length} de {total} clientes
       </div>
+
+      {historyContactId && (
+        <HistoryModal contactId={historyContactId} onClose={() => setHistoryContactId(null)} />
+      )}
     </div>
   )
 }
