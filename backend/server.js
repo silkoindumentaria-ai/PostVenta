@@ -4,24 +4,44 @@ const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ── JSON Database ─────────────────────────────────────────────────────────────
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'postventa.json');
+// ── Supabase (base de datos) ──────────────────────────────────────────────────
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-function loadDb() {
-  let db = { sessions: [], contacts: [], contactLogs: [], nextSessionId: 1, nextContactId: 1, nextLogId: 1 };
-  if (fs.existsSync(DB_PATH)) {
-    try {
-      db = { ...db, ...JSON.parse(fs.readFileSync(DB_PATH, 'utf-8')) };
-    } catch { /* corrupt file → start fresh */ }
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('Faltan SUPABASE_URL y/o SUPABASE_SERVICE_KEY en las variables de entorno.');
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false },
+});
+
+// PostgREST devuelve máximo 1000 filas por request; esto pagina hasta traer todo.
+// buildQuery debe devolver una query NUEVA en cada llamada (no son reutilizables).
+const SB_PAGE = 1000;
+async function fetchAllRows(buildQuery) {
+  const all = [];
+  for (let from = 0; ; from += SB_PAGE) {
+    const { data, error } = await buildQuery().range(from, from + SB_PAGE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...data);
+    if (data.length < SB_PAGE) break;
   }
-  if (!Array.isArray(db.contactLogs)) db.contactLogs = [];
-  if (typeof db.nextLogId !== 'number') db.nextLogId = 1;
-  return db;
+  return all;
+}
+
+async function insertRows(table, rows, chunk = 500) {
+  for (let i = 0; i < rows.length; i += chunk) {
+    const { error } = await supabase.from(table).insert(rows.slice(i, i + chunk));
+    if (error) throw new Error(error.message);
+  }
 }
 
 // Normaliza un teléfono argentino al formato 549XXXXXXXXXX (misma lógica que
@@ -37,12 +57,6 @@ function normalizePhone(raw) {
     return d;
   }
   return '549' + d;
-}
-
-function saveDb(db) {
-  const tmp = DB_PATH + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf-8');
-  fs.renameSync(tmp, DB_PATH);
 }
 
 // ── Gestion Moda client ───────────────────────────────────────────────────────
@@ -165,6 +179,30 @@ async function enrichPhonesFromClients(sales) {
   });
 }
 
+// Inserta la sesión y sus contactos; si fallan los contactos borra la sesión
+// para no dejar una sesión vacía huérfana.
+async function createSessionWithContacts(sessionRow, buildContacts) {
+  const { data: session, error } = await supabase
+    .from('sessions')
+    .insert(sessionRow)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+
+  const contactRows = buildContacts(session.id);
+  try {
+    await insertRows('contacts', contactRows);
+  } catch (err) {
+    await supabase.from('sessions').delete().eq('id', session.id);
+    throw err;
+  }
+
+  return { session, total: contactRows.length };
+}
+
+// ── Health check (para monitores de uptime / evitar spin-down en Render) ─────
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
 // ── Tienda Nube sessions ──────────────────────────────────────────────────────
 app.post('/api/tn/sessions', async (req, res) => {
   const { name, date_from, date_to, whatsapp_message } = req.body;
@@ -193,45 +231,35 @@ app.post('/api/tn/sessions', async (req, res) => {
     const msg = whatsapp_message?.trim() ||
       'Hola [Nombre], ¿cómo estás? Nos contactamos desde Silko para consultarte sobre tu reciente compra.';
 
-    const db = loadDb();
+    const seen = new Set();
+    const unique = valid.filter(o => (seen.has(o.id) ? false : seen.add(o.id)));
 
-    const session = {
-      id: db.nextSessionId++,
-      name: name.trim(),
-      source: 'tn',
-      channel_id: null,
-      channel_name: 'Tienda Nube',
-      store_id: null,
-      store_name: null,
-      date_from,
-      date_to,
-      whatsapp_message: msg,
-      status: 'active',
-      created_at: new Date().toISOString(),
-    };
-    db.sessions.push(session);
-
-    const seenIds = new Set();
-    for (const o of valid) {
-      if (seenIds.has(o.id)) continue;
-      seenIds.add(o.id);
-      const phone = (o.contact_phone || o.customer?.phone || '').trim() || null;
-      const dateOnly = o.created_at ? o.created_at.split('T')[0] : date_from;
-      db.contacts.push({
-        id: db.nextContactId++,
-        session_id: session.id,
+    const { session, total } = await createSessionWithContacts(
+      {
+        name: name.trim(),
+        source: 'tn',
+        channel_id: null,
+        channel_name: 'Tienda Nube',
+        store_id: null,
+        store_name: null,
+        date_from,
+        date_to,
+        whatsapp_message: msg,
+        status: 'active',
+      },
+      sessionId => unique.map(o => ({
+        session_id: sessionId,
         sale_id: o.id,
         client_id: o.customer?.id || null,
         client_name: o.contact_name.trim(),
-        client_phone: phone,
-        date_sale: dateOnly,
+        client_phone: (o.contact_phone || o.customer?.phone || '').trim() || null,
+        date_sale: o.created_at ? o.created_at.split('T')[0] : date_from,
         contacted: false,
         contacted_at: null,
-      });
-    }
+      }))
+    );
 
-    saveDb(db);
-    res.json({ ...session, total_contacts: seenIds.size, contacted_count: 0 });
+    res.json({ ...session, total_contacts: total, contacted_count: 0 });
   } catch (err) {
     const detail = err.response?.data?.description || err.response?.data?.message || err.message;
     console.error('tn session error:', err.response?.status, detail);
@@ -272,20 +300,32 @@ app.get('/api/channels-stores', async (req, res) => {
 });
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
-app.get('/api/sessions', (req, res) => {
-  const db = loadDb();
-  const active = db.sessions
-    .filter(s => s.status === 'active')
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-    .map(s => {
-      const sessionContacts = db.contacts.filter(c => c.session_id === s.id);
-      return {
-        ...s,
-        total_contacts: sessionContacts.length,
-        contacted_count: sessionContacts.filter(c => c.contacted).length,
-      };
-    });
-  res.json(active);
+app.get('/api/sessions', async (req, res) => {
+  try {
+    const { data: sessions, error } = await supabase
+      .from('sessions')
+      .select('*')
+      .eq('status', 'active')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+
+    const withCounts = await Promise.all(
+      sessions.map(async s => {
+        const [totalRes, contactedRes] = await Promise.all([
+          supabase.from('contacts').select('id', { count: 'exact', head: true }).eq('session_id', s.id),
+          supabase.from('contacts').select('id', { count: 'exact', head: true }).eq('session_id', s.id).eq('contacted', true),
+        ]);
+        if (totalRes.error) throw new Error(totalRes.error.message);
+        if (contactedRes.error) throw new Error(contactedRes.error.message);
+        return { ...s, total_contacts: totalRes.count || 0, contacted_count: contactedRes.count || 0 };
+      })
+    );
+
+    res.json(withCounts);
+  } catch (err) {
+    console.error('list sessions:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/sessions', async (req, res) => {
@@ -314,170 +354,228 @@ app.post('/api/sessions', async (req, res) => {
     const msg = whatsapp_message?.trim() ||
       'Hola [Nombre], ¿cómo estás? Nos contactamos desde Silko para consultarte sobre tu reciente compra.';
 
-    const db = loadDb();
-
-    const session = {
-      id: db.nextSessionId++,
-      name: name.trim(),
-      source: 'gm',
-      channel_id: channel_id || null,
-      channel_name: valid[0]?.channel || null,
-      store_id: store_id || null,
-      store_name: valid[0]?.store || null,
-      date_from,
-      date_to,
-      whatsapp_message: msg,
-      status: 'active',
-      created_at: new Date().toISOString(),
-    };
-    db.sessions.push(session);
-
     // Deduplicate by sale_id within the same session
-    const seenSaleIds = new Set();
-    for (const s of valid) {
-      if (seenSaleIds.has(s.id)) continue;
-      seenSaleIds.add(s.id);
-      const phone = (s.client?.cellphone_number || s.client?.phone_number || s.client_phone || '').trim() || null;
-      db.contacts.push({
-        id: db.nextContactId++,
-        session_id: session.id,
+    const seen = new Set();
+    const unique = valid.filter(s => (seen.has(s.id) ? false : seen.add(s.id)));
+
+    const { session, total } = await createSessionWithContacts(
+      {
+        name: name.trim(),
+        source: 'gm',
+        channel_id: channel_id || null,
+        channel_name: valid[0]?.channel || null,
+        store_id: store_id || null,
+        store_name: valid[0]?.store || null,
+        date_from,
+        date_to,
+        whatsapp_message: msg,
+        status: 'active',
+      },
+      sessionId => unique.map(s => ({
+        session_id: sessionId,
         sale_id: s.id,
         client_id: s.client_id || null,
         client_name: s.client_name.trim(),
-        client_phone: phone,
+        client_phone: (s.client?.cellphone_number || s.client?.phone_number || s.client_phone || '').trim() || null,
         date_sale: s.date_sale,
         contacted: false,
         contacted_at: null,
-      });
-    }
+      }))
+    );
 
-    saveDb(db);
-
-    res.json({ ...session, total_contacts: seenSaleIds.size, contacted_count: 0 });
+    res.json({ ...session, total_contacts: total, contacted_count: 0 });
   } catch (err) {
     console.error('create session:', err.response?.data || err.message);
     res.status(500).json({ error: err.response?.data?.message || err.message });
   }
 });
 
-app.get('/api/sessions/:id/contacts', (req, res) => {
-  const db = loadDb();
-  const id = +req.params.id;
-  const session = db.sessions.find(s => s.id === id);
-  if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
+app.get('/api/sessions/:id/contacts', async (req, res) => {
+  try {
+    const id = +req.params.id;
+    const { data: session, error } = await supabase
+      .from('sessions')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
 
-  const contacts = db.contacts
-    .filter(c => c.session_id === id)
-    .sort((a, b) => {
-      if (b.date_sale !== a.date_sale) return b.date_sale.localeCompare(a.date_sale);
-      return a.client_name.localeCompare(b.client_name);
-    });
+    const contacts = await fetchAllRows(() =>
+      supabase
+        .from('contacts')
+        .select('*')
+        .eq('session_id', id)
+        .order('date_sale', { ascending: false, nullsFirst: false })
+        .order('client_name', { ascending: true })
+        .order('id', { ascending: true })
+    );
 
-  res.json({ session, contacts });
+    res.json({ session, contacts });
+  } catch (err) {
+    console.error('session contacts:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/sessions/:id/refresh-phones', async (req, res) => {
-  const db = loadDb();
-  const id = +req.params.id;
-  const session = db.sessions.find(s => s.id === id);
-  if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
+  try {
+    const id = +req.params.id;
+    const { data: session, error } = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
 
-  const noPhone = db.contacts.filter(c => c.session_id === id && !c.client_phone && c.client_name);
-
-  if (noPhone.length === 0) return res.json({ updated: 0 });
-
-  const uniqueClients = Object.values(
-    Object.fromEntries(noPhone.map(c => [c.client_name, { id: c.client_id, name: c.client_name }]))
-  );
-
-  console.log(`Refrescando teléfonos: ${uniqueClients.length} clientes sin teléfono en sesión ${id}...`);
-
-  const phoneMap = {};
-  const BATCH = 10;
-  for (let i = 0; i < uniqueClients.length; i += BATCH) {
-    const chunk = uniqueClients.slice(i, i + BATCH);
-    const results = await Promise.all(
-      chunk.map(async ({ id: cid, name }) => ({ name, phone: await fetchClientPhone(cid, name) }))
+    const noPhone = await fetchAllRows(() =>
+      supabase
+        .from('contacts')
+        .select('id, client_id, client_name')
+        .eq('session_id', id)
+        .is('client_phone', null)
+        .order('id')
     );
-    for (const { name, phone } of results) {
-      if (phone) phoneMap[name] = phone;
+
+    if (noPhone.length === 0) return res.json({ updated: 0 });
+
+    const uniqueClients = Object.values(
+      Object.fromEntries(noPhone.map(c => [c.client_name, { id: c.client_id, name: c.client_name }]))
+    );
+
+    console.log(`Refrescando teléfonos: ${uniqueClients.length} clientes sin teléfono en sesión ${id}...`);
+
+    const phoneMap = {};
+    const BATCH = 10;
+    for (let i = 0; i < uniqueClients.length; i += BATCH) {
+      const chunk = uniqueClients.slice(i, i + BATCH);
+      const results = await Promise.all(
+        chunk.map(async ({ id: cid, name }) => ({ name, phone: await fetchClientPhone(cid, name) }))
+      );
+      for (const { name, phone } of results) {
+        if (phone) phoneMap[name] = phone;
+      }
     }
-  }
 
-  let updated = 0;
-  for (const contact of db.contacts) {
-    if (contact.session_id !== id || contact.client_phone) continue;
-    const phone = phoneMap[contact.client_name] || null;
-    if (phone) { contact.client_phone = phone; updated++; }
-  }
+    let updated = 0;
+    for (const [clientName, phone] of Object.entries(phoneMap)) {
+      const { data: rows, error: upErr } = await supabase
+        .from('contacts')
+        .update({ client_phone: phone })
+        .eq('session_id', id)
+        .eq('client_name', clientName)
+        .is('client_phone', null)
+        .select('id');
+      if (upErr) throw new Error(upErr.message);
+      updated += rows.length;
+    }
 
-  saveDb(db);
-  res.json({ updated, total_sin_telefono: noPhone.length });
+    res.json({ updated, total_sin_telefono: noPhone.length });
+  } catch (err) {
+    console.error('refresh phones:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.patch('/api/sessions/:id/finish', (req, res) => {
-  const db = loadDb();
-  const id = +req.params.id;
-  const session = db.sessions.find(s => s.id === id);
-  if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
-  session.status = 'finished';
-  saveDb(db);
-  res.json({ ok: true });
+app.patch('/api/sessions/:id/finish', async (req, res) => {
+  try {
+    const id = +req.params.id;
+    const { data: rows, error } = await supabase
+      .from('sessions')
+      .update({ status: 'finished' })
+      .eq('id', id)
+      .select('id');
+    if (error) throw new Error(error.message);
+    if (rows.length === 0) return res.status(404).json({ error: 'Sesión no encontrada' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('finish session:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Contacts ──────────────────────────────────────────────────────────────────
-app.patch('/api/contacts/:id', (req, res) => {
-  const db = loadDb();
-  const id = +req.params.id;
-  const contact = db.contacts.find(c => c.id === id);
-  if (!contact) return res.status(404).json({ error: 'Contacto no encontrado' });
+app.patch('/api/contacts/:id', async (req, res) => {
+  try {
+    const id = +req.params.id;
+    const contacted = !!req.body.contacted;
+    const contacted_at = contacted ? new Date().toISOString() : null;
 
-  const contacted = !!req.body.contacted;
-  contact.contacted = contacted;
-  contact.contacted_at = contacted ? new Date().toISOString() : null;
+    const { data: contact, error } = await supabase
+      .from('contacts')
+      .update({ contacted, contacted_at })
+      .eq('id', id)
+      .select()
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!contact) return res.status(404).json({ error: 'Contacto no encontrado' });
 
-  if (contacted) {
-    const session = db.sessions.find(s => s.id === contact.session_id);
-    db.contactLogs.push({
-      id: db.nextLogId++,
-      contact_id: contact.id,
-      session_id: contact.session_id,
-      session_name: session?.name || '(sesión eliminada)',
-      source: session?.source || 'gm',
-      client_id: contact.client_id,
-      client_name: contact.client_name,
-      client_phone_raw: contact.client_phone,
-      client_phone_normalized: normalizePhone(contact.client_phone),
-      message: (req.body.message || '').trim(),
-      contacted_at: contact.contacted_at,
-    });
+    if (contacted) {
+      const { data: session } = await supabase
+        .from('sessions')
+        .select('name, source')
+        .eq('id', contact.session_id)
+        .maybeSingle();
+
+      const { error: logErr } = await supabase.from('contact_logs').insert({
+        contact_id: contact.id,
+        session_id: contact.session_id,
+        session_name: session?.name || '(sesión eliminada)',
+        source: session?.source || 'gm',
+        client_id: contact.client_id,
+        client_name: contact.client_name,
+        client_phone_raw: contact.client_phone,
+        client_phone_normalized: normalizePhone(contact.client_phone),
+        message: (req.body.message || '').trim(),
+        contacted_at,
+      });
+      if (logErr) throw new Error(logErr.message);
+    }
+    // Destildar solo cambia el estado actual; el historial en contact_logs nunca se borra.
+
+    res.json(contact);
+  } catch (err) {
+    console.error('toggle contact:', err.message);
+    res.status(500).json({ error: err.message });
   }
-  // Destildar solo cambia el estado actual; el historial en contactLogs nunca se borra.
-
-  saveDb(db);
-  res.json(contact);
 });
 
-app.get('/api/contacts/:id/history', (req, res) => {
-  const db = loadDb();
-  const id = +req.params.id;
-  const contact = db.contacts.find(c => c.id === id);
-  if (!contact) return res.status(404).json({ error: 'Contacto no encontrado' });
+app.get('/api/contacts/:id/history', async (req, res) => {
+  try {
+    const id = +req.params.id;
+    const { data: contact, error } = await supabase
+      .from('contacts')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!contact) return res.status(404).json({ error: 'Contacto no encontrado' });
 
-  const normalizedPhone = normalizePhone(contact.client_phone);
-  let entries;
-  if (normalizedPhone) {
-    entries = db.contactLogs.filter(l => l.client_phone_normalized === normalizedPhone);
-  } else if (contact.client_id) {
-    const source = db.sessions.find(s => s.id === contact.session_id)?.source || 'gm';
-    entries = db.contactLogs.filter(l => l.client_id === contact.client_id && l.source === source);
-  } else {
-    entries = db.contactLogs.filter(l => l.contact_id === contact.id);
+    const normalizedPhone = normalizePhone(contact.client_phone);
+    let query = supabase.from('contact_logs').select('*');
+
+    if (normalizedPhone) {
+      query = query.eq('client_phone_normalized', normalizedPhone);
+    } else if (contact.client_id) {
+      const { data: session } = await supabase
+        .from('sessions')
+        .select('source')
+        .eq('id', contact.session_id)
+        .maybeSingle();
+      query = query.eq('client_id', contact.client_id).eq('source', session?.source || 'gm');
+    } else {
+      query = query.eq('contact_id', contact.id);
+    }
+
+    const { data: entries, error: logErr } = await query.order('contacted_at', { ascending: false });
+    if (logErr) throw new Error(logErr.message);
+
+    res.json({ client_name: contact.client_name, client_phone: contact.client_phone, entries });
+  } catch (err) {
+    console.error('contact history:', err.message);
+    res.status(500).json({ error: err.message });
   }
-
-  entries = entries.slice().sort((a, b) => new Date(b.contacted_at) - new Date(a.contacted_at));
-
-  res.json({ client_name: contact.client_name, client_phone: contact.client_phone, entries });
 });
 
 // ── Static (producción) ───────────────────────────────────────────────────────

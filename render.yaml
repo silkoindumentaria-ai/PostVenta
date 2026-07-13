@@ -1,0 +1,23 @@
+# Blueprint de Render — https://render.com/docs/blueprint-spec
+# En Render: New + → Blueprint → conectar este repo. Detecta este archivo solo.
+services:
+  - type: web
+    name: postventa-silko
+    runtime: node
+    plan: free
+    buildCommand: npm --prefix backend install --omit=dev && npm --prefix frontend install && npm --prefix frontend run build
+    startCommand: node backend/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: GM_TOKEN
+        sync: false
+      - key: TN_ACCESS_TOKEN
+        sync: false
+      - key: TN_STORE_ID
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false

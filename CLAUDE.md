@@ -10,9 +10,9 @@ Panel web para gestionar campañas de postventa por WhatsApp, consultando ventas
 |---|---|
 | Frontend | React 18 + Vite 5 |
 | Backend | Node.js + Express 4 (CommonJS) |
-| Base de datos | JSON file (`postventa.json`) — sin ORM, sin SQLite |
+| Base de datos | Supabase (Postgres) vía `@supabase/supabase-js` — sin ORM ni drivers nativos |
 | HTTP client (backend) | Axios |
-| Deploy | Railway (cloud) |
+| Deploy | Render (plan free, `render.yaml`) |
 | Repositorio | https://github.com/silkoindumentaria-ai/PostVenta |
 
 ---
@@ -22,15 +22,17 @@ Panel web para gestionar campañas de postventa por WhatsApp, consultando ventas
 ```
 PostVenta-Online/
 ├── CLAUDE.md                        ← este archivo
-├── package.json                     ← raíz: scripts build/start para Railway
-├── nixpacks.toml                    ← configuración de build para Railway
+├── package.json                     ← raíz: scripts build/start
+├── render.yaml                      ← blueprint de deploy para Render
+├── nixpacks.toml                    ← legacy Railway (ya no se usa)
 ├── .gitignore
 │
 ├── backend/
 │   ├── server.js                    ← servidor Express + toda la lógica API
-│   ├── package.json                 ← deps: express, axios, cors, dotenv
-│   ├── .env                         ← GM_TOKEN, PORT (no va a git)
-│   └── postventa.json               ← base de datos (no va a git, en volumen Railway)
+│   ├── package.json                 ← deps: express, axios, cors, dotenv, @supabase/supabase-js
+│   ├── .env                         ← GM_TOKEN, TN_*, SUPABASE_* (no va a git)
+│   ├── supabase-schema.sql          ← schema de tablas (ejecutar 1 vez en Supabase SQL Editor)
+│   └── migrate-json-to-supabase.js  ← script one-shot: importa postventa.json a Supabase
 │
 └── frontend/
     ├── index.html
@@ -66,16 +68,15 @@ El frontend en dev proxea `/api/*` automáticamente al backend en 3001 (configur
 ## Deploy a producción
 
 ```bash
-# Build del frontend → genera backend/public/
-cd frontend && npm run build
-
-# O simplemente pushear a GitHub — Railway redespliega automáticamente
+# Pushear a GitHub — Render redespliega automáticamente
 git add .
 git commit -m "descripción"
 git push
 ```
 
-Railway detecta el push, ejecuta `nixpacks.toml` (instala deps, buildea frontend, arranca backend) y redespliega en ~2 minutos.
+Render detecta el push, ejecuta el build definido en `render.yaml` (instala deps, buildea frontend a `backend/public/`, arranca backend) y redespliega en unos minutos.
+
+**Ojo (plan free de Render):** el servicio se duerme tras 15 minutos sin tráfico; la primera visita después tarda ~30-60 segundos en responder. Los datos no se pierden (viven en Supabase).
 
 ---
 
@@ -83,11 +84,14 @@ Railway detecta el push, ejecuta `nixpacks.toml` (instala deps, buildea frontend
 
 | Variable | Dónde | Descripción |
 |---|---|---|
-| `GM_TOKEN` | Railway + `.env` local | Bearer token para API Gestion Moda |
-| `DB_PATH` | Railway | Ruta del JSON de datos. En Railway: `/data/postventa.json` |
-| `PORT` | Railway (auto) | Puerto del servidor. Railway lo inyecta automáticamente |
+| `GM_TOKEN` | Render + `.env` local | Bearer token para API Gestion Moda |
+| `TN_ACCESS_TOKEN` | Render + `.env` local | Token de Tienda Nube |
+| `TN_STORE_ID` | Render + `.env` local | ID de tienda TN (1406056) |
+| `SUPABASE_URL` | Render + `.env` local | URL del proyecto Supabase (`https://xxxx.supabase.co`) |
+| `SUPABASE_SERVICE_KEY` | Render + `.env` local | Service role / secret key de Supabase (bypasea RLS; solo backend, nunca al frontend) |
+| `PORT` | Render (auto) | Puerto del servidor. Render lo inyecta automáticamente |
 
-En local, `DB_PATH` no hace falta — usa `backend/postventa.json` por defecto.
+El servidor hace `process.exit(1)` al arrancar si faltan `SUPABASE_URL` o `SUPABASE_SERVICE_KEY`.
 
 ---
 
@@ -160,52 +164,54 @@ Campos relevantes de cada cliente:
 
 ---
 
-## Base de datos local (postventa.json)
+## Base de datos (Supabase / Postgres)
 
-Estructura del archivo JSON:
+Tres tablas, definidas en `backend/supabase-schema.sql`. Todas con RLS activado **sin políticas**: solo el backend accede, usando la service key (que bypasea RLS). El acceso desde el backend es vía `@supabase/supabase-js` (REST/PostgREST, sin conexión directa a Postgres).
 
-```json
-{
-  "sessions": [...],
-  "contacts": [...],
-  "nextSessionId": 5,
-  "nextContactId": 312
-}
+**Límite importante de PostgREST:** máximo 1000 filas por request. `server.js` tiene el helper `fetchAllRows()` que pagina con `.range()` — usarlo para cualquier query que pueda devolver muchas filas (ej. contactos de una sesión).
+
+### Tabla `sessions`
+
+```sql
+id bigint identity PK,
+name text not null,
+source text not null default 'gm',   -- 'gm' | 'tn'
+channel_id bigint,                   -- null = todos los canales
+channel_name text,
+store_id bigint,                     -- null = todas las tiendas
+store_name text,
+date_from date not null,
+date_to date not null,
+whatsapp_message text,               -- [Nombre] se reemplaza con el primer nombre
+status text not null default 'active',  -- 'active' | 'finished'
+created_at timestamptz default now()
 ```
 
-### Modelo Session
+### Tabla `contacts`
 
-```js
-{
-  id: 1,                          // auto-incremental
-  name: "PostVenta Mayo Florida", // nombre de la sesión
-  channel_id: 883,                // null = todos los canales
-  channel_name: "Whatsapp",
-  store_id: 4736,                 // null = todas las tiendas
-  store_name: "Local - Galeria Florida",
-  date_from: "2026-05-01",
-  date_to: "2026-05-21",
-  whatsapp_message: "Hola [Nombre], ...", // [Nombre] se reemplaza con el primer nombre
-  status: "active",               // "active" | "finished"
-  created_at: "2026-05-21T14:00:00.000Z"
-}
+```sql
+id bigint identity PK,
+session_id bigint not null → sessions(id),
+sale_id bigint,                      -- ID de la venta en GM / orden en TN
+client_id bigint,                    -- ID del cliente en GM / customer en TN
+client_name text not null,
+client_phone text,                   -- null si no tiene teléfono
+date_sale date,
+contacted boolean default false,
+contacted_at timestamptz             -- null si no contactado
 ```
 
-### Modelo Contact
+### Tabla `contact_logs` (historial, nunca se borra)
 
-```js
-{
-  id: 1,                          // auto-incremental
-  session_id: 1,                  // FK a sessions.id
-  sale_id: 1247695,               // ID de la venta en Gestion Moda
-  client_id: 587350,              // ID del cliente en Gestion Moda
-  client_name: "Luis Emiliano Arce",
-  client_phone: "+5491123456789", // null si no tiene teléfono
-  date_sale: "2026-05-21",
-  contacted: false,               // true cuando se marca el checkbox
-  contacted_at: null              // ISO string cuando contacted=true
-}
+```sql
+id bigint identity PK,
+contact_id bigint, session_id bigint, session_name text, source text,
+client_id bigint, client_name text,
+client_phone_raw text, client_phone_normalized text,  -- normalizado a 549XXXXXXXXXX
+message text, contacted_at timestamptz
 ```
+
+Se inserta una fila cada vez que se marca un contacto como contactado. El historial de un cliente se busca por `client_phone_normalized` (o `client_id`+`source` si no hay teléfono), lo que permite cruzar al mismo cliente entre sesiones y fuentes distintas.
 
 ---
 
@@ -213,12 +219,16 @@ Estructura del archivo JSON:
 
 | Método | Ruta | Descripción |
 |---|---|---|
+| `GET` | `/api/health` | Health check (Render + monitores de uptime) |
 | `GET` | `/api/channels-stores` | Canales y tiendas disponibles (últimos 6 meses) |
 | `GET` | `/api/sessions` | Sesiones activas con conteos de progreso |
-| `POST` | `/api/sessions` | Crear sesión (fetcha ventas de GM, guarda contactos) |
+| `POST` | `/api/sessions` | Crear sesión GM (fetcha ventas, guarda contactos) |
+| `POST` | `/api/tn/sessions` | Crear sesión Tienda Nube (fetcha órdenes pagas) |
 | `GET` | `/api/sessions/:id/contacts` | Sesión + lista de contactos |
+| `POST` | `/api/sessions/:id/refresh-phones` | Re-busca teléfonos faltantes en GM |
 | `PATCH` | `/api/sessions/:id/finish` | Archivar sesión (status → "finished") |
-| `PATCH` | `/api/contacts/:id` | Toggle contacted (true/false) |
+| `PATCH` | `/api/contacts/:id` | Toggle contacted; al marcar, registra en `contact_logs` |
+| `GET` | `/api/contacts/:id/history` | Historial de contactos del mismo cliente |
 
 ### POST /api/sessions — body esperado
 ```json
@@ -278,32 +288,21 @@ Normalización de teléfonos argentinos en `ContactsTable.jsx`:
 
 ---
 
-## Railway — configuración de deploy
+## Render — configuración de deploy
 
-**nixpacks.toml** (en raíz):
-```toml
-[phases.install]
-cmds = [
-  "npm --prefix backend install --omit=dev",
-  "npm --prefix frontend install"
-]
+Definido en **render.yaml** (en raíz): servicio web Node en plan free, build `npm --prefix backend install --omit=dev && npm --prefix frontend install && npm --prefix frontend run build`, start `node backend/server.js`, health check en `/api/health`.
 
-[phases.build]
-cmds = ["npm --prefix frontend run build"]
-
-[start]
-cmd = "node backend/server.js"
-```
-
-**Volumen:** montado en `/data` → `DB_PATH=/data/postventa.json`
+Las env vars (`GM_TOKEN`, `TN_ACCESS_TOKEN`, `TN_STORE_ID`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`) se cargan en el dashboard de Render (están declaradas con `sync: false` en el yaml).
 
 **El frontend buildeado** queda en `backend/public/` y es servido como archivos estáticos por Express.
+
+**Historia:** el proyecto vivió en Railway (volumen `/data` + `postventa.json`) hasta julio 2026; se migró a Render + Supabase cuando terminó el plan gratuito de Railway. `nixpacks.toml` quedó como legacy.
 
 ---
 
 ## Tienda Nube — integración
 
-**Credenciales (en Railway env vars y backend/.env):**
+**Credenciales (en Render env vars y backend/.env):**
 - `TN_ACCESS_TOKEN` — bearer token
 - `TN_STORE_ID` — 1406056
 
@@ -347,7 +346,7 @@ Body igual a GM pero sin `channel_id` ni `store_id`:
 { "name": "...", "date_from": "2026-05-01", "date_to": "2026-05-21", "whatsapp_message": "..." }
 ```
 
-Las sesiones TN se guardan con `source: "tn"` en el JSON.
+Las sesiones TN se guardan con `source: "tn"` en la tabla `sessions`.
 
 ### UI — selector de fuente
 
@@ -361,8 +360,9 @@ El modal `NewSessionModal` recibe `source` como prop y adapta:
 
 ## Decisiones de diseño importantes
 
-- **Sin SQLite/base de datos nativa:** se usa JSON file para evitar compilación nativa (`better-sqlite3` no tiene binarios para Node 24 en Windows sin Visual Studio).
-- **Persistencia en Railway:** el JSON vive en un volumen montado en `/data`, separado del código de la app.
+- **Supabase por REST, sin drivers nativos:** se usa `@supabase/supabase-js` (HTTP puro) en vez de `pg` o SQLite para evitar compilación nativa y problemas de conexión directa a Postgres desde Render.
+- **Persistencia:** los datos viven en Supabase (plan free), separados del hosting. Render free no tiene disco persistente — no escribir nada en el filesystem que deba sobrevivir un deploy.
+- **IDs preservados:** la migración desde `postventa.json` conservó los IDs originales (`generated by default as identity` + `reset_id_sequences()`).
 - **Teléfonos:** la API de GM no expone `/clientes/{id}`. Se busca por nombre (`GET /clientes?q={nombre}`) y se verifica cruzando el `id`. Si el cliente no tiene teléfono en GM, queda como `null` (sin solución desde la app).
-- **Sesiones finalizadas:** se marcan con `status: "finished"` pero los datos NO se borran del JSON. Solo desaparecen de la vista.
+- **Sesiones finalizadas:** se marcan con `status: "finished"` pero los datos NO se borran. Solo desaparecen de la vista.
 - **Sin autenticación:** acceso abierto por diseño inicial. Se puede agregar en el futuro.
