@@ -1,0 +1,663 @@
+/* Módulo de mayoristas. Todas las clases van con prefijo wh- porque App.css es
+   global y sin scoping. Se apoya en las variables de index.css y reusa .btn,
+   .badge, .modal-*, .form-*, .filter-pill y .ct-table de App.css. */
+
+:root {
+  --wh-ok: #16a34a;
+  --wh-warn: #d97706;
+  --wh-alert: #dc2626;
+  --wh-none: #94a3b8;
+  --wh-warn-bg: #fef3c7;
+  --wh-alert-bg: #fee2e2;
+}
+
+.wh-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Barra superior ────────────────────────────────────────────────────────── */
+.wh-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  box-shadow: var(--shadow);
+}
+
+.wh-sync {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wh-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wh-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--wh-warn-bg);
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.wh-banner svg { flex-shrink: 0; }
+
+/* ── Agenda ────────────────────────────────────────────────────────────────── */
+.wh-agenda {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wh-agenda-group {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--wh-none);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  box-shadow: var(--shadow);
+}
+
+.wh-agenda-overdue { border-left-color: var(--wh-alert); }
+.wh-agenda-due     { border-left-color: var(--primary); }
+.wh-agenda-soon    { border-left-color: var(--wh-none); }
+
+.wh-agenda-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.wh-agenda-overdue .wh-agenda-icon { color: var(--wh-alert); }
+.wh-agenda-due .wh-agenda-icon     { color: var(--primary); }
+.wh-agenda-soon .wh-agenda-icon    { color: var(--text-light); }
+
+.wh-agenda-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wh-agenda-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.wh-agenda-item:first-child { border-top: none; }
+
+.wh-agenda-name {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.wh-agenda-name:hover { text-decoration: underline; }
+
+.wh-agenda-late {
+  color: var(--wh-alert);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.wh-agenda-note {
+  color: var(--text-muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.wh-agenda-seller {
+  color: var(--text-light);
+  font-size: 12px;
+}
+
+.wh-agenda-item .wh-btn-sm { margin-left: auto; }
+
+/* ── Controles ─────────────────────────────────────────────────────────────── */
+.wh-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  box-shadow: var(--shadow);
+}
+
+/* Buscador con el icono adentro del input */
+.wh-search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+}
+
+.wh-search-icon {
+  position: absolute;
+  left: 11px;
+  color: var(--text-light);
+  pointer-events: none;
+}
+
+.wh-search-input { width: 100%; padding-left: 34px !important; }
+
+.wh-select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+/* ── Grilla de tarjetas ────────────────────────────────────────────────────── */
+.wh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+/* Toda la tarjeta abre la ficha; los controles internos cortan la propagación. */
+.wh-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--wh-none);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: box-shadow .15s, transform .15s, border-color .15s;
+}
+
+.wh-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.wh-card:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.wh-status-ok    { border-left-color: var(--wh-ok); }
+.wh-status-warn  { border-left-color: var(--wh-warn); }
+.wh-status-alert { border-left-color: var(--wh-alert); }
+.wh-status-none  { border-left-color: var(--wh-none); }
+
+.wh-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wh-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.wh-card:hover .wh-card-name { color: var(--primary); }
+
+.wh-card-head-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ── Menú de acciones de la tarjeta ────────────────────────────────────────── */
+.wh-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-light);
+  cursor: pointer;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+
+.wh-icon-btn:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.wh-icon-btn:disabled { opacity: .5; cursor: default; }
+
+.wh-menu { position: relative; }
+
+.wh-menu-pop {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  z-index: 20;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.wh-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s;
+}
+
+.wh-menu-item:hover { background: var(--bg); }
+
+.wh-menu-danger { color: var(--danger); }
+.wh-menu-danger:hover { background: #fee2e2; }
+
+.wh-chip {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* Archivado: la tarjeta se apaga para que se distinga de una activa,
+   pero sigue siendo legible y clickeable. */
+.wh-card-archived {
+  background: var(--bg);
+  border-left-color: var(--wh-none);
+  opacity: .78;
+}
+
+.wh-card-archived:hover { opacity: 1; }
+
+.wh-chip-archived { background: #e2e8f0; color: #475569; }
+
+.wh-banner-muted {
+  background: var(--bg);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.wh-chip-ok    { background: #dcfce7; color: #166534; }
+.wh-chip-warn  { background: var(--wh-warn-bg); color: #92400e; }
+.wh-chip-alert { background: var(--wh-alert-bg); color: #991b1b; }
+.wh-chip-none  { background: #f1f5f9; color: var(--text-muted); }
+
+.wh-card-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.wh-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.wh-metric { display: flex; flex-direction: column; gap: 2px; }
+
+.wh-metric-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wh-metric-label {
+  font-size: 11px;
+  color: var(--text-light);
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
+.wh-card-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.wh-muted { color: var(--text-muted); }
+
+.wh-note {
+  color: var(--text-muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.wh-clock { font-size: 11px; }
+
+.wh-next-overdue { color: var(--wh-alert); font-weight: 600; }
+
+.wh-seller {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-light);
+}
+
+.wh-card-contact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wh-card-tags, .wh-sellers, .wh-detail-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.wh-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--primary-light);
+  color: var(--primary-hover);
+}
+
+.wh-tag-removable button {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.wh-outcome {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.wh-outcome-compro       { background: #dcfce7; color: #166534; }
+.wh-outcome-va_a_comprar { background: var(--primary-light); color: var(--primary-hover); }
+.wh-outcome-pidio_info   { background: #ede9fe; color: #5b21b6; }
+.wh-outcome-no_contesta  { background: #f1f5f9; color: var(--text-muted); }
+.wh-outcome-no_interesa  { background: var(--wh-alert-bg); color: #991b1b; }
+
+.wh-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.wh-btn-sm {
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+}
+
+.wh-card-actions .wsp-link,
+.wh-detail-actions .wsp-link { flex-shrink: 0; }
+
+/* Botón de refresco de la tarjeta: icono solo, empujado a la derecha */
+.wh-btn-refresh {
+  margin-left: auto;
+  border-color: var(--border);
+}
+
+.wh-btn-refresh:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-light);
+}
+
+/* Los iconos de lucide se alinean con el texto que acompañan. */
+.wh-inline-icon { flex-shrink: 0; vertical-align: -2px; }
+
+.wh-refresh-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--success);
+  background: #dcfce7;
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+
+.wh-refresh-msg svg { flex-shrink: 0; }
+
+.wh-refresh-err { color: #991b1b; background: var(--wh-alert-bg); }
+
+.wh-no-results {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 32px;
+}
+
+/* ── Ficha del cliente ─────────────────────────────────────────────────────── */
+.wh-modal-wide { max-width: 760px; }
+
+.wh-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.wh-detail-notes {
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text);
+  margin: 10px 0;
+}
+
+.wh-detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.wh-detail-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.wh-detail-metric-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wh-detail-metric-label {
+  font-size: 11px;
+  color: var(--text-light);
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
+.wh-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 18px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.wh-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wh-timeline-item {
+  border-left: 2px solid var(--border);
+  padding: 6px 0 6px 12px;
+}
+
+.wh-timeline-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.wh-timeline-tools { margin-left: auto; display: flex; gap: 2px; }
+
+.wh-timeline-note {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 3px;
+}
+
+.wh-timeline-next {
+  font-size: 12px;
+  color: var(--text-light);
+  margin-top: 3px;
+}
+
+.wh-sales-table { max-height: 280px; }
+
+/* ── Alta de mayorista ─────────────────────────────────────────────────────── */
+.wh-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.wh-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.wh-result:hover:not(:disabled) {
+  background: var(--primary-light);
+  border-color: var(--primary);
+}
+
+.wh-result:disabled { opacity: .55; cursor: not-allowed; }
+
+.wh-result-name { font-weight: 500; color: var(--text); }
+.wh-result-phone { color: var(--text-muted); margin-left: auto; }
+
+.wh-result-tag {
+  font-size: 11px;
+  background: var(--bg);
+  color: var(--text-muted);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+/* ── Formulario de contacto ────────────────────────────────────────────────── */
+.wh-quick-dates {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.wh-seller-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.wh-seller-add input { flex: 1; }
+
+@media (max-width: 640px) {
+  .wh-grid { grid-template-columns: 1fr; }
+  .wh-topbar { flex-direction: column; align-items: stretch; }
+  .wh-agenda-note { max-width: 100%; }
+}

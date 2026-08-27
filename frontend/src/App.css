@@ -41,6 +41,54 @@
   font-weight: 500;
 }
 
+/* ── View selector (PostVenta / Mayoristas) ─────────────────────────────────── */
+/* Nivel de navegación por encima del selector de fuente: PostVenta trabaja por
+   campañas, Mayoristas es seguimiento individual. */
+.view-selector {
+  display: flex;
+  gap: 4px;
+  margin-right: auto;
+  margin-left: 24px;
+}
+
+.view-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #94a3b8;
+  background: transparent;
+  transition: all .18s;
+  cursor: pointer;
+}
+
+.view-btn:hover { color: #fff; background: rgba(255,255,255,.1); }
+
+.view-btn.view-active {
+  color: #fff;
+  font-weight: 700;
+  background: rgba(255,255,255,.14);
+}
+
+/* Contactos vencidos + de hoy: el motivo para entrar al módulo. */
+.view-badge {
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* ── Source selector ────────────────────────────────────────────────────────── */
 .source-selector {
   display: flex;
@@ -85,6 +133,9 @@
 .source-tn.source-active .source-dot { opacity: 1; color: #fff; }
 
 .btn-new-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: var(--primary);
   color: #fff;
   border: none;
@@ -138,6 +189,9 @@
 
 .sync-icon { display: inline-block; font-size: 13px; line-height: 1; }
 .sync-icon.spinning { animation: sync-spin 1.2s linear infinite; }
+
+/* Giro para cualquier icono que indique "en curso" (refresco, sync). */
+.icon-spin { animation: sync-spin 1s linear infinite; }
 
 @keyframes sync-spin {
   from { transform: rotate(0deg); }
@@ -249,7 +303,12 @@
   margin: 0 auto;
 }
 
-.empty-icon { font-size: 48px; margin-bottom: 16px; }
+.empty-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+  color: var(--text-light);
+}
 .empty-state h2 { font-size: 20px; margin-bottom: 8px; }
 .empty-state p { color: var(--text-muted); margin-bottom: 24px; }
 
@@ -406,6 +465,9 @@
 .btn-refresh-phones:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .refresh-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   color: #166534;
 }
@@ -704,14 +766,19 @@
 .history-empty { color: var(--text-light); font-size: 13.5px; }
 
 .btn-history-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
-  font-size: 16px;
+  color: var(--text-light);
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 5px;
   border-radius: 6px;
+  transition: background .12s, color .12s;
 }
-.btn-history-icon:hover { background: #f1f5f9; }
+
+.btn-history-icon:hover { background: var(--bg); color: var(--text); }
 
 .modal-form { padding: 0 24px 24px; }
 
@@ -797,4 +864,33 @@
   justify-content: flex-end;
   gap: 10px;
   margin-top: 8px;
+}
+
+/* ── Modal de confirmación (components/ConfirmModal.jsx) ─────────────────────── */
+/* Genérico: reemplaza a window.confirm en acciones destructivas. */
+.confirm-modal { max-width: 460px; }
+
+.confirm-message {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.confirm-detail {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.confirm-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #991b1b;
+  background: #fee2e2;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 4px;
 }

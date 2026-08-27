@@ -1,9 +1,5 @@
 import { useState, useEffect } from 'react'
-
-function formatDateTime(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('es-AR')
-}
+import { formatDateTime } from '../utils/format.js'
 
 export default function HistoryModal({ contactId, onClose }) {
   const [data, setData] = useState(null)

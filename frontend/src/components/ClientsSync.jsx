@@ -1,16 +1,8 @@
 // Botón + progreso del sync del padrón de clientes de Gestion Moda.
 // El espejo (tabla gm_clients) es de donde salen los teléfonos de las ventas:
 // la API de ventas no devuelve el celular, así que sin este sync no hay WhatsApp.
-
-function formatAge(syncedAt) {
-  if (!syncedAt) return null
-  const mins = Math.floor((Date.now() - new Date(syncedAt).getTime()) / 60000)
-  if (mins < 1) return 'recién'
-  if (mins < 60) return `hace ${mins} min`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `hace ${hours} h`
-  return `hace ${Math.floor(hours / 24)} d`
-}
+import { RefreshCw } from 'lucide-react'
+import { formatAge } from '../utils/format.js'
 
 export default function ClientsSync({ status, onSync }) {
   const running = status?.status === 'running'
@@ -33,7 +25,7 @@ export default function ClientsSync({ status, onSync }) {
         disabled={running}
         title={title}
       >
-        <span className={`sync-icon ${running ? 'spinning' : ''}`}>⟳</span>
+        <RefreshCw size={14} className={running ? 'icon-spin' : ''} />
         {running
           ? `Sincronizando clientes${progress ? ` ${progress}` : ''}...`
           : 'Sincronizar clientes'}

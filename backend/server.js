@@ -4,144 +4,13 @@ const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
-const { createClient } = require('@supabase/supabase-js');
+const { supabase, fetchAllRows, insertRows, upsertRows, normalizePhone } = require('./lib/db');
+const { gm, fetchAllSales } = require('./lib/gm');
+const wholesaleRouter = require('./wholesale');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// ── Supabase (base de datos) ──────────────────────────────────────────────────
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('Faltan SUPABASE_URL y/o SUPABASE_SERVICE_KEY en las variables de entorno.');
-  process.exit(1);
-}
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: { persistSession: false },
-});
-
-// PostgREST devuelve máximo 1000 filas por request; esto pagina hasta traer todo.
-// buildQuery debe devolver una query NUEVA en cada llamada (no son reutilizables).
-const SB_PAGE = 1000;
-async function fetchAllRows(buildQuery) {
-  const all = [];
-  for (let from = 0; ; from += SB_PAGE) {
-    const { data, error } = await buildQuery().range(from, from + SB_PAGE - 1);
-    if (error) throw new Error(error.message);
-    all.push(...data);
-    if (data.length < SB_PAGE) break;
-  }
-  return all;
-}
-
-async function insertRows(table, rows, chunk = 500) {
-  for (let i = 0; i < rows.length; i += chunk) {
-    const { error } = await supabase.from(table).insert(rows.slice(i, i + chunk));
-    if (error) throw new Error(error.message);
-  }
-}
-
-async function upsertRows(table, rows, chunk = 500) {
-  for (let i = 0; i < rows.length; i += chunk) {
-    const { error } = await supabase.from(table).upsert(rows.slice(i, i + chunk), { onConflict: 'id' });
-    if (error) throw new Error(error.message);
-  }
-}
-
-// Normaliza un teléfono argentino al formato 549XXXXXXXXXX (misma lógica que
-// formatPhoneForWhatsApp en frontend/src/components/ContactsTable.jsx) para
-// poder matchear el mismo cliente real entre sesiones y fuentes distintas.
-function normalizePhone(raw) {
-  if (!raw) return null;
-  let d = String(raw).replace(/\D/g, '');
-  if (!d) return null;
-  if (d.startsWith('0') && d.length > 10) d = d.slice(1);
-  if (d.startsWith('54')) {
-    if (!d.startsWith('549') && d.length >= 12) d = '549' + d.slice(2);
-    return d;
-  }
-  return '549' + d;
-}
-
-// ── Gestion Moda client ───────────────────────────────────────────────────────
-const gm = axios.create({
-  baseURL: 'https://gestion.moda/api/v1',
-  headers: {
-    Authorization: `Bearer ${process.env.GM_TOKEN}`,
-    'Content-Type': 'application/json',
-  },
-  timeout: 30000,
-});
-
-// ── Rate limit de Gestion Moda ────────────────────────────────────────────────
-// La API responde X-RateLimit-Limit: 60, y el contador es COMPARTIDO entre todos
-// los endpoints (/ventas y /clientes descuentan del mismo bucket). Se limita a 50
-// por minuto para dejar margen. Es una cola FIFO única a nivel módulo, así que
-// cubre también requests concurrentes de endpoints distintos.
-const GM_MAX_PER_WINDOW = 50;
-const GM_WINDOW_MS = 60_000;
-
-const gmTimestamps = [];   // momentos de los requests dentro de la ventana actual
-let gmQueue = Promise.resolve();
-
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-// Espera un turno respetando la ventana deslizante. Serializado por gmQueue para
-// que dos requests en paralelo no reserven el mismo turno.
-function gmAcquireSlot() {
-  const turn = gmQueue.then(async () => {
-    for (;;) {
-      const now = Date.now();
-      while (gmTimestamps.length && now - gmTimestamps[0] >= GM_WINDOW_MS) gmTimestamps.shift();
-      if (gmTimestamps.length < GM_MAX_PER_WINDOW) {
-        gmTimestamps.push(now);
-        return;
-      }
-      await sleep(GM_WINDOW_MS - (now - gmTimestamps[0]) + 50);
-    }
-  });
-  // La cola no debe romperse si un turno falla.
-  gmQueue = turn.catch(() => {});
-  return turn;
-}
-
-gm.interceptors.request.use(async config => {
-  await gmAcquireSlot();
-  return config;
-});
-
-// Reintenta ante 429/503 respetando Retry-After. Loguea cuando queda poco margen.
-const GM_MAX_RETRIES = 3;
-
-gm.interceptors.response.use(
-  response => {
-    const remaining = Number(response.headers['x-ratelimit-remaining']);
-    if (Number.isFinite(remaining) && remaining < 10) {
-      console.warn(`GM rate limit: quedan ${remaining} requests en la ventana actual`);
-    }
-    return response;
-  },
-  async error => {
-    const { config, response } = error;
-    const status = response?.status;
-    if (!config || (status !== 429 && status !== 503)) return Promise.reject(error);
-
-    config.__gmRetries = (config.__gmRetries || 0) + 1;
-    if (config.__gmRetries > GM_MAX_RETRIES) return Promise.reject(error);
-
-    const retryAfter = Number(response.headers?.['retry-after']);
-    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
-      ? retryAfter * 1000
-      : GM_WINDOW_MS * config.__gmRetries;
-
-    console.warn(`GM ${status} — reintento ${config.__gmRetries}/${GM_MAX_RETRIES} en ${Math.round(waitMs / 1000)}s`);
-    await sleep(waitMs);
-    return gm.request(config);
-  }
-);
 
 // ── Tienda Nube client ────────────────────────────────────────────────────────
 const tn = axios.create({
@@ -163,20 +32,6 @@ async function fetchAllTNOrders(params) {
     });
     all.push(...data);
     if (data.length < 200 || page >= 50) break;
-    page++;
-  }
-  return all;
-}
-
-async function fetchAllSales(params) {
-  const all = [];
-  let page = 1;
-  while (true) {
-    const { data } = await gm.get('/ventas/obtener', {
-      params: { ...params, per_page: 200, page, include_details: 0, include_payments: 0 },
-    });
-    all.push(...data.data);
-    if (!data.meta.has_more_pages || page >= data.meta.last_page || page >= 50) break;
     page++;
   }
   return all;
@@ -761,6 +616,10 @@ app.get('/api/contacts/:id/history', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── Mayoristas (CRM de seguimiento) ───────────────────────────────────────────
+// Va antes del catch-all app.get('*') de abajo, que si no se traga estas rutas.
+app.use('/api/wholesale', wholesaleRouter);
 
 // ── Static (producción) ───────────────────────────────────────────────────────
 const publicDir = path.join(__dirname, 'public');

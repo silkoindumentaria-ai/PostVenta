@@ -1,11 +1,17 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Store, ShoppingCart, Plus } from 'lucide-react'
 import NewSessionModal from './components/NewSessionModal.jsx'
 import ContactsTable from './components/ContactsTable.jsx'
 import ClientsSync from './components/ClientsSync.jsx'
+import WholesalePanel from './components/wholesale/WholesalePanel.jsx'
 import './App.css'
 
 export default function App() {
   const [sessions, setSessions] = useState([])
+  // `view` es ortogonal a activeSource: PostVenta trabaja por campañas (sesiones
+  // de GM o TN), Mayoristas es un módulo de seguimiento individual y continuo.
+  const [view, setView] = useState('postventa')  // 'postventa' | 'mayoristas'
+  const [agendaCount, setAgendaCount] = useState(0)
   const [activeSource, setActiveSource] = useState('gm') // 'gm' | 'tn'
   const [activeId, setActiveId] = useState({ gm: null, tn: null })
   const [sessionData, setSessionData] = useState(null)
@@ -131,32 +137,55 @@ export default function App() {
           <span className="brand-sep">|</span>
           <span className="brand-sub">PostVenta</span>
         </div>
-        <div className="source-selector">
+
+        <div className="view-selector">
           <button
-            className={`source-btn source-gm ${activeSource === 'gm' ? 'source-active' : ''}`}
-            onClick={() => setActiveSource('gm')}
+            className={`view-btn ${view === 'postventa' ? 'view-active' : ''}`}
+            onClick={() => setView('postventa')}
           >
-            <span className="source-dot" />
-            Gestion Moda
+            PostVenta
           </button>
           <button
-            className={`source-btn source-tn ${activeSource === 'tn' ? 'source-active' : ''}`}
-            onClick={() => setActiveSource('tn')}
+            className={`view-btn ${view === 'mayoristas' ? 'view-active' : ''}`}
+            onClick={() => setView('mayoristas')}
           >
-            <span className="source-dot" />
-            Tienda Nube
+            Mayoristas
+            {agendaCount > 0 && <span className="view-badge">{agendaCount}</span>}
           </button>
         </div>
+
+        {view === 'postventa' && (
+          <div className="source-selector">
+            <button
+              className={`source-btn source-gm ${activeSource === 'gm' ? 'source-active' : ''}`}
+              onClick={() => setActiveSource('gm')}
+            >
+              <span className="source-dot" />
+              Gestion Moda
+            </button>
+            <button
+              className={`source-btn source-tn ${activeSource === 'tn' ? 'source-active' : ''}`}
+              onClick={() => setActiveSource('tn')}
+            >
+              <span className="source-dot" />
+              Tienda Nube
+            </button>
+          </div>
+        )}
+
         <div className="header-actions">
-          {activeSource === 'gm' && (
+          {view === 'postventa' && activeSource === 'gm' && (
             <ClientsSync status={syncStatus} onSync={startClientsSync} />
           )}
-          <button className="btn-new-session" onClick={() => setShowModal(true)}>
-            + Nueva sesión
-          </button>
+          {view === 'postventa' && (
+            <button className="btn-new-session" onClick={() => setShowModal(true)}>
+              <Plus size={15} /> Nueva sesión
+            </button>
+          )}
         </div>
       </header>
 
+      {view === 'postventa' && (
       <div className="tabs-bar">
         {sourceSessions.map(s => (
           <button
@@ -177,15 +206,23 @@ export default function App() {
           <span className="tabs-empty">Sin sesiones activas</span>
         )}
       </div>
+      )}
 
       <main className="app-main">
+        {view === 'mayoristas' && <WholesalePanel onAgendaChange={setAgendaCount} />}
+
+        {view === 'postventa' && <>
         {sourceSessions.length === 0 && !loadingContacts && (
           <div className="empty-state">
-            <div className="empty-icon">{activeSource === 'gm' ? '🏪' : '🛒'}</div>
+            <div className="empty-icon">
+              {activeSource === 'gm'
+                ? <Store size={48} strokeWidth={1.5} />
+                : <ShoppingCart size={48} strokeWidth={1.5} />}
+            </div>
             <h2>{activeSource === 'gm' ? 'Gestion Moda' : 'Tienda Nube'}</h2>
             <p>Creá una nueva sesión para comenzar a contactar clientes por WhatsApp.</p>
             <button className="btn btn-primary large" onClick={() => setShowModal(true)}>
-              + Crear primera sesión
+              <Plus size={16} /> Crear primera sesión
             </button>
           </div>
         )}
@@ -206,6 +243,7 @@ export default function App() {
             onSyncStarted={fetchSyncStatus}
           />
         )}
+        </>}
       </main>
 
       {showModal && (
