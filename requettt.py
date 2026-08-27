@@ -20,7 +20,7 @@ def load_gm_token():
 
 def get_sales_data(nombre_cliente):
     params = {
-        "search": "Mauro Bulacio",  # busca por cliente, número, email, factura o comentario
+        "search": "INDIANA ANABEL MUÑOZ",  # busca por cliente, número, email, factura o comentario
         "limit": 1,                # un solo resultado
         "include_details": 1,      # incluye items y alias "detalles"
         "include_payments": 1,     # incluye pagos (y credit_payments si hubo sobrepago)
