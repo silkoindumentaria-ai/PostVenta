@@ -44,6 +44,13 @@ async function insertRows(table, rows, chunk = 500) {
   }
 }
 
+async function upsertRows(table, rows, chunk = 500) {
+  for (let i = 0; i < rows.length; i += chunk) {
+    const { error } = await supabase.from(table).upsert(rows.slice(i, i + chunk), { onConflict: 'id' });
+    if (error) throw new Error(error.message);
+  }
+}
+
 // Normaliza un teléfono argentino al formato 549XXXXXXXXXX (misma lógica que
 // formatPhoneForWhatsApp en frontend/src/components/ContactsTable.jsx) para
 // poder matchear el mismo cliente real entre sesiones y fuentes distintas.
@@ -68,6 +75,73 @@ const gm = axios.create({
   },
   timeout: 30000,
 });
+
+// ── Rate limit de Gestion Moda ────────────────────────────────────────────────
+// La API responde X-RateLimit-Limit: 60, y el contador es COMPARTIDO entre todos
+// los endpoints (/ventas y /clientes descuentan del mismo bucket). Se limita a 50
+// por minuto para dejar margen. Es una cola FIFO única a nivel módulo, así que
+// cubre también requests concurrentes de endpoints distintos.
+const GM_MAX_PER_WINDOW = 50;
+const GM_WINDOW_MS = 60_000;
+
+const gmTimestamps = [];   // momentos de los requests dentro de la ventana actual
+let gmQueue = Promise.resolve();
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Espera un turno respetando la ventana deslizante. Serializado por gmQueue para
+// que dos requests en paralelo no reserven el mismo turno.
+function gmAcquireSlot() {
+  const turn = gmQueue.then(async () => {
+    for (;;) {
+      const now = Date.now();
+      while (gmTimestamps.length && now - gmTimestamps[0] >= GM_WINDOW_MS) gmTimestamps.shift();
+      if (gmTimestamps.length < GM_MAX_PER_WINDOW) {
+        gmTimestamps.push(now);
+        return;
+      }
+      await sleep(GM_WINDOW_MS - (now - gmTimestamps[0]) + 50);
+    }
+  });
+  // La cola no debe romperse si un turno falla.
+  gmQueue = turn.catch(() => {});
+  return turn;
+}
+
+gm.interceptors.request.use(async config => {
+  await gmAcquireSlot();
+  return config;
+});
+
+// Reintenta ante 429/503 respetando Retry-After. Loguea cuando queda poco margen.
+const GM_MAX_RETRIES = 3;
+
+gm.interceptors.response.use(
+  response => {
+    const remaining = Number(response.headers['x-ratelimit-remaining']);
+    if (Number.isFinite(remaining) && remaining < 10) {
+      console.warn(`GM rate limit: quedan ${remaining} requests en la ventana actual`);
+    }
+    return response;
+  },
+  async error => {
+    const { config, response } = error;
+    const status = response?.status;
+    if (!config || (status !== 429 && status !== 503)) return Promise.reject(error);
+
+    config.__gmRetries = (config.__gmRetries || 0) + 1;
+    if (config.__gmRetries > GM_MAX_RETRIES) return Promise.reject(error);
+
+    const retryAfter = Number(response.headers?.['retry-after']);
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1000
+      : GM_WINDOW_MS * config.__gmRetries;
+
+    console.warn(`GM ${status} — reintento ${config.__gmRetries}/${GM_MAX_RETRIES} en ${Math.round(waitMs / 1000)}s`);
+    await sleep(waitMs);
+    return gm.request(config);
+  }
+);
 
 // ── Tienda Nube client ────────────────────────────────────────────────────────
 const tn = axios.create({
@@ -108,75 +182,150 @@ async function fetchAllSales(params) {
   return all;
 }
 
-// Search client by name, verify by ID, return cellphone_number or phone_number
-async function fetchClientPhone(clientId, clientName) {
+// ── Espejo del padrón de clientes de GM ───────────────────────────────────────
+// GET /ventas/obtener NO devuelve el celular: el sub-objeto `client` solo trae
+// phone_number (casi siempre vacío) y no existe GET /clientes/{id}. Buscar por
+// nombre tampoco sirve: GM tiene los nombres con encoding roto, así que q=MUÑOZ
+// devuelve 0 resultados. La solución es bajar el padrón completo (27.5k clientes
+// ≈ 138 páginas) a la tabla gm_clients y cruzar localmente por client_id.
+const GM_CLIENTS_PER_PAGE = 200;
+const SYNC_STALE_MS = 24 * 60 * 60 * 1000;   // el espejo se considera vencido a las 24 h
+const SYNC_STUCK_MS = 15 * 60 * 1000;        // un 'running' más viejo que esto se da por muerto
+
+async function getSyncState() {
+  const { data, error } = await supabase
+    .from('gm_sync_state')
+    .select('*')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || { id: 1, status: 'idle', page: 0, total_pages: 0, clients_synced: 0 };
+}
+
+async function setSyncState(patch) {
+  const { error } = await supabase.from('gm_sync_state').upsert({ id: 1, ...patch }, { onConflict: 'id' });
+  if (error) throw new Error(error.message);
+}
+
+function clientRowFromGm(c) {
+  const phone = (c.cellphone_number || c.phone_number || '').trim() || null;
+  return {
+    id: c.id,
+    name: (c.name || '').trim() || null,
+    phone,
+    phone_normalized: normalizePhone(phone),
+    active: c.active !== false,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+// Marca el sync como 'running' antes de arrancar. Devuelve false si ya hay uno
+// en curso. Se hace en un paso aparte y con await para que el endpoint que lo
+// dispara responda recién cuando el estado ya está escrito: si no, el frontend
+// poletea, lee 'idle', y se queda esperando un sync que "todavía no arrancó".
+async function claimSync() {
+  const state = await getSyncState();
+  if (state.status === 'running' && state.started_at && Date.now() - new Date(state.started_at).getTime() < SYNC_STUCK_MS) {
+    console.log('Sync de clientes ya en curso, se ignora el pedido.');
+    return false;
+  }
+
+  await setSyncState({
+    status: 'running',
+    page: 0,
+    total_pages: 0,
+    clients_synced: 0,
+    started_at: new Date().toISOString(),
+    finished_at: null,
+    error: null,
+  });
+
+  return true;
+}
+
+// Baja todo el padrón paginado y lo upsertea. Asume que claimSync() ya corrió.
+// Tarda ~3 min por el throttle de 50 req/min, así que va siempre en background.
+async function runSyncPages() {
+  console.log('Sincronizando padrón de clientes de Gestion Moda...');
+
   try {
-    const { data } = await gm.get('/clientes', {
-      params: { q: clientName, per_page: 50 },
-    });
-    const results = data.data || [];
+    let page = 1;
+    let synced = 0;
+    let lastPage = 1;
 
-    // Primary: exact ID match
-    const match = results.find(c => c.id === clientId);
-    if (match) {
-      return (match.cellphone_number || match.phone_number || '').trim() || null;
-    }
-
-    // Fallback: single result with a phone (name search likely unambiguous)
-    if (results.length === 1) {
-      return (results[0].cellphone_number || results[0].phone_number || '').trim() || null;
-    }
-
-    // Fallback: try searching by ID directly via first-name only if full name failed
-    const firstName = clientName.split(' ')[0];
-    if (firstName && firstName !== clientName) {
-      const { data: data2 } = await gm.get('/clientes', {
-        params: { q: firstName, per_page: 50 },
+    for (;;) {
+      const { data } = await gm.get('/clientes', {
+        params: { per_page: GM_CLIENTS_PER_PAGE, page },
       });
-      const match2 = (data2.data || []).find(c => c.id === clientId);
-      if (match2) {
-        return (match2.cellphone_number || match2.phone_number || '').trim() || null;
-      }
+
+      // Dedupe por id: si dos páginas repiten un cliente, el upsert falla con
+      // "ON CONFLICT DO UPDATE command cannot affect row a second time".
+      const rows = Object.values(
+        Object.fromEntries((data.data || []).map(c => [c.id, clientRowFromGm(c)]))
+      );
+      if (rows.length) await upsertRows('gm_clients', rows);
+
+      synced += rows.length;
+      lastPage = data.meta?.last_page || page;
+
+      await setSyncState({ page, total_pages: lastPage, clients_synced: synced });
+
+      if (!data.meta?.has_more_pages || page >= lastPage) break;
+      page++;
     }
 
-    return null;
-  } catch {
-    return null;
+    await setSyncState({ status: 'idle', finished_at: new Date().toISOString(), error: null });
+    console.log(`Sync de clientes terminado: ${synced} clientes en ${lastPage} páginas.`);
+  } catch (err) {
+    const detail = err.response?.data?.message || err.message;
+    console.error('sync clientes:', detail);
+    // No se borra nada: el upsert es incremental, lo ya sincronizado queda servible.
+    await setSyncState({ status: 'error', finished_at: new Date().toISOString(), error: detail });
   }
 }
 
-// For sales missing a phone, search /clientes by name and verify by ID (batched, 10 at a time)
-async function enrichPhonesFromClients(sales) {
-  const noPhone = sales.filter(
-    s => !(s.client?.cellphone_number || s.client?.phone_number || s.client_phone || '').trim() && s.client_id && s.client_name
-  );
+// Reserva el turno (await, rápido) y deja el recorrido de páginas corriendo solo.
+// Devuelve true si efectivamente arrancó un sync nuevo.
+async function startSyncInBackground() {
+  const claimed = await claimSync();
+  if (!claimed) return false;
+  runSyncPages().catch(err => console.error('sync clientes (background):', err.message));
+  return true;
+}
 
-  if (noPhone.length === 0) return sales;
+// true si el espejo está vacío o su fila más reciente tiene más de 24 h.
+async function isSyncStale() {
+  const { data, error } = await supabase
+    .from('gm_clients')
+    .select('synced_at')
+    .order('synced_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return true;
+  return Date.now() - new Date(data.synced_at).getTime() > SYNC_STALE_MS;
+}
 
-  // Deduplicate by client_id
-  const uniqueClients = Object.values(
-    Object.fromEntries(noPhone.map(s => [s.client_id, { id: s.client_id, name: s.client_name }]))
-  );
+// Cruza client_ids contra el espejo. Devuelve { [client_id]: phone }. 0 requests a GM.
+const LOOKUP_CHUNK = 300;   // ids por request, para no pasarse del largo de URL de PostgREST
 
-  console.log(`Consultando teléfonos de ${uniqueClients.length} clientes sin teléfono...`);
-
+async function lookupPhones(clientIds) {
+  const ids = [...new Set(clientIds.filter(Boolean).map(Number))];
   const phoneMap = {};
-  const BATCH = 10;
-  for (let i = 0; i < uniqueClients.length; i += BATCH) {
-    const chunk = uniqueClients.slice(i, i + BATCH);
-    const results = await Promise.all(
-      chunk.map(async ({ id, name }) => ({ id, phone: await fetchClientPhone(id, name) }))
-    );
-    for (const { id, phone } of results) {
-      if (phone) phoneMap[id] = phone;
+
+  for (let i = 0; i < ids.length; i += LOOKUP_CHUNK) {
+    const chunk = ids.slice(i, i + LOOKUP_CHUNK);
+    const { data, error } = await supabase
+      .from('gm_clients')
+      .select('id, phone')
+      .in('id', chunk);
+    if (error) throw new Error(error.message);
+    for (const row of data) {
+      if (row.phone) phoneMap[row.id] = row.phone;
     }
   }
 
-  return sales.map(s => {
-    const existing = (s.client?.cellphone_number || s.client?.phone_number || s.client_phone || '').trim();
-    if (existing) return s;
-    return { ...s, client_phone: phoneMap[s.client_id] || null };
-  });
+  return phoneMap;
 }
 
 // Inserta la sesión y sus contactos; si fallan los contactos borra la sesión
@@ -343,13 +492,18 @@ app.post('/api/sessions', async (req, res) => {
     if (channel_id) params.channel_id = channel_id;
     if (store_id) params.store_id = store_id;
 
-    const rawSales = await fetchAllSales(params);
-    const sales = await enrichPhonesFromClients(rawSales);
+    const sales = await fetchAllSales(params);
     const valid = sales.filter(s => s.client_name?.trim());
 
     if (valid.length === 0) {
       return res.status(404).json({ error: 'No se encontraron ventas con esos filtros en el período indicado.' });
     }
+
+    // Los teléfonos salen del espejo local (0 requests a GM). Si está vencido se
+    // resincroniza en background y la sesión se crea con lo que haya.
+    const phoneMap = await lookupPhones(valid.map(s => s.client_id));
+    const stale = await isSyncStale();
+    const syncStarted = stale ? await startSyncInBackground() : false;
 
     const msg = whatsapp_message?.trim() ||
       'Hola [Nombre], ¿cómo estás? Nos contactamos desde Silko para consultarte sobre tu reciente compra.';
@@ -376,14 +530,14 @@ app.post('/api/sessions', async (req, res) => {
         sale_id: s.id,
         client_id: s.client_id || null,
         client_name: s.client_name.trim(),
-        client_phone: (s.client?.cellphone_number || s.client?.phone_number || s.client_phone || '').trim() || null,
+        client_phone: phoneMap[s.client_id] || (s.client?.phone_number || '').trim() || null,
         date_sale: s.date_sale,
         contacted: false,
         contacted_at: null,
       }))
     );
 
-    res.json({ ...session, total_contacts: total, contacted_count: 0 });
+    res.json({ ...session, total_contacts: total, contacted_count: 0, sync_started: syncStarted });
   } catch (err) {
     console.error('create session:', err.response?.data || err.message);
     res.status(500).json({ error: err.response?.data?.message || err.message });
@@ -429,51 +583,81 @@ app.post('/api/sessions/:id/refresh-phones', async (req, res) => {
     if (error) throw new Error(error.message);
     if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
 
+    // Se traen las filas completas para poder actualizarlas con un upsert en
+    // lote (un request cada 500) en vez de un UPDATE por cada teléfono distinto.
     const noPhone = await fetchAllRows(() =>
       supabase
         .from('contacts')
-        .select('id, client_id, client_name')
+        .select('*')
         .eq('session_id', id)
         .is('client_phone', null)
         .order('id')
     );
 
-    if (noPhone.length === 0) return res.json({ updated: 0 });
+    if (noPhone.length === 0) return res.json({ updated: 0, total_sin_telefono: 0, sync_started: false });
 
-    const uniqueClients = Object.values(
-      Object.fromEntries(noPhone.map(c => [c.client_name, { id: c.client_id, name: c.client_name }]))
-    );
+    // Si el espejo está vencido (o vacío) se resincroniza en background: el
+    // usuario puede volver a apretar el botón cuando termine.
+    const stale = await isSyncStale();
+    const syncStarted = stale ? await startSyncInBackground() : false;
 
-    console.log(`Refrescando teléfonos: ${uniqueClients.length} clientes sin teléfono en sesión ${id}...`);
+    console.log(`Refrescando teléfonos: ${noPhone.length} contactos sin teléfono en sesión ${id}...`);
 
-    const phoneMap = {};
-    const BATCH = 10;
-    for (let i = 0; i < uniqueClients.length; i += BATCH) {
-      const chunk = uniqueClients.slice(i, i + BATCH);
-      const results = await Promise.all(
-        chunk.map(async ({ id: cid, name }) => ({ name, phone: await fetchClientPhone(cid, name) }))
-      );
-      for (const { name, phone } of results) {
-        if (phone) phoneMap[name] = phone;
-      }
-    }
+    const phoneMap = await lookupPhones(noPhone.map(c => c.client_id));
 
-    let updated = 0;
-    for (const [clientName, phone] of Object.entries(phoneMap)) {
-      const { data: rows, error: upErr } = await supabase
-        .from('contacts')
-        .update({ client_phone: phone })
-        .eq('session_id', id)
-        .eq('client_name', clientName)
-        .is('client_phone', null)
-        .select('id');
-      if (upErr) throw new Error(upErr.message);
-      updated += rows.length;
-    }
+    // El teléfono se asigna por client_id, no por nombre: dos clientes distintos
+    // pueden llamarse igual y compartir teléfono sería un error.
+    const toUpdate = noPhone
+      .filter(c => phoneMap[c.client_id])
+      .map(c => ({ ...c, client_phone: phoneMap[c.client_id] }));
 
-    res.json({ updated, total_sin_telefono: noPhone.length });
+    if (toUpdate.length) await upsertRows('contacts', toUpdate);
+
+    res.json({ updated: toUpdate.length, total_sin_telefono: noPhone.length, sync_started: syncStarted });
   } catch (err) {
     console.error('refresh phones:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Padrón de clientes (espejo de GM) ─────────────────────────────────────────
+app.post('/api/clients/sync', async (_req, res) => {
+  try {
+    const state = await getSyncState();
+    const running = state.status === 'running'
+      && state.started_at
+      && Date.now() - new Date(state.started_at).getTime() < SYNC_STUCK_MS;
+
+    if (running) return res.status(202).json({ ...state, already_running: true });
+
+    const started = await startSyncInBackground();
+    res.status(202).json({ ...(await getSyncState()), already_running: !started });
+  } catch (err) {
+    console.error('clients sync:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/clients/sync-status', async (_req, res) => {
+  try {
+    const [state, countRes, lastRes] = await Promise.all([
+      getSyncState(),
+      supabase.from('gm_clients').select('id', { count: 'exact', head: true }),
+      supabase.from('gm_clients').select('synced_at').order('synced_at', { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    if (countRes.error) throw new Error(countRes.error.message);
+    if (lastRes.error) throw new Error(lastRes.error.message);
+
+    const syncedAt = lastRes.data?.synced_at || null;
+
+    res.json({
+      ...state,
+      total_clients: countRes.count || 0,
+      synced_at: syncedAt,
+      stale: !syncedAt || Date.now() - new Date(syncedAt).getTime() > SYNC_STALE_MS,
+    });
+  } catch (err) {
+    console.error('clients sync-status:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

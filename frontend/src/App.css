@@ -97,6 +97,60 @@
 
 .btn-new-session:hover { background: var(--primary-hover); }
 
+/* ── Sync del padrón de clientes ────────────────────────────────────────── */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.clients-sync {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.btn-sync-clients {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: var(--text-muted, #64748b);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
+}
+
+.btn-sync-clients:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--text, #0f172a);
+}
+
+.btn-sync-clients:disabled { cursor: default; }
+.btn-sync-clients.is-running { color: var(--primary); border-color: var(--primary); }
+.btn-sync-clients.is-error { color: #b91c1c; border-color: #fca5a5; }
+
+.sync-icon { display: inline-block; font-size: 13px; line-height: 1; }
+.sync-icon.spinning { animation: sync-spin 1.2s linear infinite; }
+
+@keyframes sync-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.sync-age {
+  font-size: 10px;
+  color: var(--text-muted, #94a3b8);
+}
+
+.sync-stale { color: #b45309; }
+
 /* ── Tabs bar ───────────────────────────────────────────────────────────── */
 .tabs-bar {
   background: var(--surface);
@@ -354,6 +408,12 @@
 .refresh-ok {
   font-size: 11px;
   color: #166534;
+}
+
+.refresh-waiting {
+  font-size: 11px;
+  color: #92400e;
+  font-style: italic;
 }
 
 .progress-bar-track {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import HistoryModal from './HistoryModal.jsx'
 
 function formatDate(str) {
@@ -34,25 +34,44 @@ function buildWhatsAppUrl(phone, message, clientName) {
   return `https://wa.me/${formatted}?text=${encodeURIComponent(buildMessageText(message, clientName))}`
 }
 
-export default function ContactsTable({ session, contacts, onToggle, onFinish, onRefreshPhones }) {
+export default function ContactsTable({ session, contacts, onToggle, onFinish, onRefreshPhones, syncStatus, onSyncStarted }) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
   const [refreshing, setRefreshing] = useState(false)
   const [refreshResult, setRefreshResult] = useState(null)
   const [historyContactId, setHistoryContactId] = useState(null)
+  // Quedó esperando a que termine un sync del padrón para reintentar el refresh.
+  const [waitingSync, setWaitingSync] = useState(false)
+  const prevSyncStatus = useRef(syncStatus?.status)
 
-  const handleRefresh = async () => {
+  const runRefresh = async () => {
     setRefreshing(true)
     setRefreshResult(null)
     try {
       const res = await fetch(`/api/sessions/${session.id}/refresh-phones`, { method: 'POST' })
       const data = await res.json()
       setRefreshResult(data.updated)
+      // El padrón estaba vencido: el backend lanzó el sync y reintentamos al terminar.
+      setWaitingSync(Boolean(data.sync_started))
+      if (data.sync_started && onSyncStarted) onSyncStarted()
       if (onRefreshPhones) onRefreshPhones()
     } finally {
       setRefreshing(false)
     }
   }
+
+  const handleRefresh = () => { runRefresh() }
+
+  // Cuando el sync del padrón pasa de 'running' a terminado, reintentar solo.
+  useEffect(() => {
+    const prev = prevSyncStatus.current
+    prevSyncStatus.current = syncStatus?.status
+    if (!waitingSync) return
+    if (prev === 'running' && syncStatus?.status === 'idle') {
+      setWaitingSync(false)
+      runRefresh()
+    }
+  }, [syncStatus?.status, waitingSync])
 
   const total = contacts.length
   const done = contacts.filter(c => c.contacted).length
@@ -114,7 +133,13 @@ export default function ContactsTable({ session, contacts, onToggle, onFinish, o
                   {refreshing ? 'Buscando...' : 'Refrescar teléfonos'}
                 </button>
               )}
-              {refreshResult !== null && (
+              {waitingSync && (
+                <span className="refresh-waiting">
+                  Actualizando el padrón de clientes
+                  {syncStatus?.total_pages ? ` (${syncStatus.page}/${syncStatus.total_pages})` : ''}...
+                </span>
+              )}
+              {refreshResult !== null && !waitingSync && (
                 <span className="refresh-ok">✓ {refreshResult} actualizados</span>
               )}
             </span>

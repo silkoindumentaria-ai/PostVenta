@@ -48,11 +48,44 @@ create table contact_logs (
 create index contact_logs_phone_idx on contact_logs (client_phone_normalized);
 create index contact_logs_client_idx on contact_logs (client_id, source);
 
+-- Espejo del padrón de clientes de Gestion Moda.
+-- La API de ventas NO devuelve el celular (el sub-objeto client solo trae
+-- phone_number, casi siempre vacío) y no existe GET /clientes/{id}, así que se
+-- baja el padrón completo paginado y el teléfono se cruza localmente por id.
+-- El id lo dicta GM: es PK sin identity, para poder hacer upsert.
+create table gm_clients (
+  id bigint primary key,
+  name text,
+  phone text,                -- cellphone_number || phone_number, trimmeado
+  phone_normalized text,     -- normalizePhone(phone), para cruzar con contact_logs
+  active boolean,
+  synced_at timestamptz not null default now()
+);
+
+create index gm_clients_phone_idx on gm_clients (phone_normalized);
+create index gm_clients_synced_idx on gm_clients (synced_at desc);
+
+-- Estado del sync del padrón: una sola fila (id = 1)
+create table gm_sync_state (
+  id smallint primary key default 1,
+  status text not null default 'idle',   -- 'idle' | 'running' | 'error'
+  page int not null default 0,
+  total_pages int not null default 0,
+  clients_synced int not null default 0,
+  started_at timestamptz,
+  finished_at timestamptz,
+  error text
+);
+
+insert into gm_sync_state (id) values (1);
+
 -- RLS activado sin políticas: solo el backend (service_role key) puede leer/escribir.
 -- La clave anon/publishable queda sin acceso a los datos.
 alter table sessions enable row level security;
 alter table contacts enable row level security;
 alter table contact_logs enable row level security;
+alter table gm_clients enable row level security;
+alter table gm_sync_state enable row level security;
 
 -- Usada por migrate-json-to-supabase.js después de importar datos con IDs originales,
 -- para que los próximos IDs autogenerados no colisionen.

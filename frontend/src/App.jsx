@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import NewSessionModal from './components/NewSessionModal.jsx'
 import ContactsTable from './components/ContactsTable.jsx'
+import ClientsSync from './components/ClientsSync.jsx'
 import './App.css'
 
 export default function App() {
@@ -10,6 +11,7 @@ export default function App() {
   const [sessionData, setSessionData] = useState(null)
   const [loadingContacts, setLoadingContacts] = useState(false)
   const [showModal, setShowModal] = useState(false)
+  const [syncStatus, setSyncStatus] = useState(null)
 
   const currentActiveId = activeId[activeSource]
   const sourceSessions = sessions.filter(s => (s.source || 'gm') === activeSource)
@@ -35,6 +37,36 @@ export default function App() {
 
   useEffect(() => { fetchSessions() }, [])
 
+  // ── Padrón de clientes de Gestion Moda ──────────────────────────────────────
+  // El teléfono de cada venta sale del espejo local que llena este sync; ver
+  // gm_clients en el backend.
+  const fetchSyncStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/clients/sync-status')
+      const data = await res.json()
+      setSyncStatus(data)
+      return data
+    } catch (e) {
+      console.error('Error fetching sync status:', e)
+      return null
+    }
+  }, [])
+
+  useEffect(() => { fetchSyncStatus() }, [])
+
+  const startClientsSync = useCallback(async () => {
+    const res = await fetch('/api/clients/sync', { method: 'POST' })
+    const data = await res.json()
+    setSyncStatus(prev => ({ ...prev, ...data }))
+  }, [])
+
+  // Mientras el sync corre, poletear el progreso cada 3 s.
+  useEffect(() => {
+    if (syncStatus?.status !== 'running') return
+    const timer = setInterval(fetchSyncStatus, 3000)
+    return () => clearInterval(timer)
+  }, [syncStatus?.status, fetchSyncStatus])
+
   useEffect(() => {
     if (!currentActiveId) { setSessionData(null); return }
     setLoadingContacts(true)
@@ -47,6 +79,8 @@ export default function App() {
 
   const handleSessionCreated = (newSession) => {
     const src = newSession.source || 'gm'
+    // La sesión se creó con un espejo vencido: el backend ya lanzó el resync.
+    if (newSession.sync_started) fetchSyncStatus()
     setSessions(prev => [{ ...newSession, total_contacts: newSession.total_contacts || 0, contacted_count: 0 }, ...prev])
     setActiveId(prev => ({ ...prev, [src]: newSession.id }))
     setShowModal(false)
@@ -113,9 +147,14 @@ export default function App() {
             Tienda Nube
           </button>
         </div>
-        <button className="btn-new-session" onClick={() => setShowModal(true)}>
-          + Nueva sesión
-        </button>
+        <div className="header-actions">
+          {activeSource === 'gm' && (
+            <ClientsSync status={syncStatus} onSync={startClientsSync} />
+          )}
+          <button className="btn-new-session" onClick={() => setShowModal(true)}>
+            + Nueva sesión
+          </button>
+        </div>
       </header>
 
       <div className="tabs-bar">
@@ -163,6 +202,8 @@ export default function App() {
             onToggle={handleContactToggle}
             onFinish={() => handleFinishSession(currentActiveId)}
             onRefreshPhones={handleRefreshPhones}
+            syncStatus={syncStatus}
+            onSyncStarted={fetchSyncStatus}
           />
         )}
       </main>

@@ -32,6 +32,7 @@ PostVenta-Online/
 │   ├── package.json                 ← deps: express, axios, cors, dotenv, @supabase/supabase-js
 │   ├── .env                         ← GM_TOKEN, TN_*, SUPABASE_* (no va a git)
 │   ├── supabase-schema.sql          ← schema de tablas (ejecutar 1 vez en Supabase SQL Editor)
+│   ├── supabase-migration-gm-clients.sql  ← migración: gm_clients + gm_sync_state
 │   └── migrate-json-to-supabase.js  ← script one-shot: importa postventa.json a Supabase
 │
 └── frontend/
@@ -45,6 +46,7 @@ PostVenta-Online/
         ├── index.css                ← variables CSS y reset
         └── components/
             ├── ContactsTable.jsx    ← tabla principal con filtros, progreso, links WSP
+            ├── ClientsSync.jsx      ← botón + progreso del sync del padrón de clientes
             └── NewSessionModal.jsx  ← modal para crear nueva sesión de postventa
 ```
 
@@ -101,6 +103,18 @@ El servidor hace `process.exit(1)` al arrancar si faltan `SUPABASE_URL` o `SUPAB
 **Auth:** `Authorization: Bearer <GM_TOKEN>` en cada request  
 **Timeout:** 30 segundos
 
+### ⚠ Rate limit: 60 requests/minuto, compartido
+
+La API responde con los headers `X-RateLimit-Limit: 60` y `X-RateLimit-Remaining`, y el
+contador es **compartido entre todos los endpoints** (`/ventas/obtener` y `/clientes`
+descuentan del mismo bucket). Pasarse devuelve `429`.
+
+`server.js` tiene un **limitador global** (interceptor de request sobre la instancia axios
+`gm`) que serializa todas las llamadas en una cola FIFO con ventana deslizante de
+**50 req/min**, más un interceptor de response que reintenta ante `429`/`503` respetando
+`Retry-After`. **Toda llamada a GM debe pasar por la instancia `gm`** — no crear otro
+cliente axios ni usar `axios.get` directo contra `gestion.moda`, porque se saltea la cola.
+
 ### Endpoints usados
 
 #### `GET /ventas/obtener`
@@ -132,14 +146,20 @@ Campos relevantes de cada venta en la respuesta:
   "store": "Local - Galeria Florida",
   "client": {
     "id": 587350,
+    "name": "Luis Emiliano Arce",
+    "email": "",
     "phone_number": "",
-    "cellphone_number": ""
+    "address": "", "city": "", "province": "", "postal_code": ""
   },
   "meta": { "has_more_pages": true, "last_page": 50 }
 }
 ```
 
-**Importante:** `client_phone` (= `phone_number`) suele estar vacío. El teléfono real puede estar en `cellphone_number` del endpoint de clientes.
+**Importante — este endpoint NUNCA devuelve el celular.** El sub-objeto `client` de una
+venta solo trae `id, name, email, phone_number, address, city, province, postal_code`:
+**el campo `cellphone_number` no existe acá**, y `phone_number` viene vacío en la práctica.
+El celular vive únicamente en `GET /clientes`. Por eso los teléfonos salen del espejo
+`gm_clients` (ver más abajo), cruzando por `client_id`.
 
 #### `GET /clientes`
 Lista/busca clientes.
@@ -150,7 +170,17 @@ Parámetros:
 | `q` | Búsqueda por nombre, email, teléfono, CUIT/DNI |
 | `per_page` | Máximo 200 |
 
-**No existe `GET /clientes/{id}`** — para buscar un cliente específico se usa `q={nombre}` y se verifica que el `id` del resultado coincida con el `client_id` de la venta.
+**No existe `GET /clientes/{id}`.** Tampoco se puede buscar por id: `q` busca en nombre,
+email, teléfono y CUIT/DNI, pero **no** en el id (`q=240537` devuelve 0 resultados).
+
+**⚠ Bug de encoding en `q`:** GM tiene los nombres guardados con un encoding roto, así que
+la búsqueda falla con ñ y acentos. Verificado: `q=MUÑOZ` → **0 resultados**;
+`q=MUNOZ` → **71 resultados**. Buscar clientes por nombre completo es poco confiable.
+
+**Por eso el padrón se baja entero:** hay ~27.500 clientes = **138 páginas** con
+`per_page=200`, menos requests que buscar cliente por cliente, y el cruce por `client_id`
+es exacto. La paginación es la estándar (`page`, `meta.last_page`, `meta.has_more_pages`)
+y el orden es **alfabético por nombre**, no por id.
 
 Campos relevantes de cada cliente:
 ```json
@@ -166,7 +196,9 @@ Campos relevantes de cada cliente:
 
 ## Base de datos (Supabase / Postgres)
 
-Tres tablas, definidas en `backend/supabase-schema.sql`. Todas con RLS activado **sin políticas**: solo el backend accede, usando la service key (que bypasea RLS). El acceso desde el backend es vía `@supabase/supabase-js` (REST/PostgREST, sin conexión directa a Postgres).
+Cinco tablas, definidas en `backend/supabase-schema.sql`. Todas con RLS activado **sin políticas**: solo el backend accede, usando la service key (que bypasea RLS). El acceso desde el backend es vía `@supabase/supabase-js` (REST/PostgREST, sin conexión directa a Postgres).
+
+**No se puede hacer DDL desde el backend** (PostgREST no lo permite): las tablas nuevas se crean pegando el SQL en Supabase Dashboard → SQL Editor. `backend/supabase-migration-gm-clients.sql` es la migración de `gm_clients` + `gm_sync_state` para bases ya creadas.
 
 **Límite importante de PostgREST:** máximo 1000 filas por request. `server.js` tiene el helper `fetchAllRows()` que pagina con `.range()` — usarlo para cualquier query que pueda devolver muchas filas (ej. contactos de una sesión).
 
@@ -213,6 +245,34 @@ message text, contacted_at timestamptz
 
 Se inserta una fila cada vez que se marca un contacto como contactado. El historial de un cliente se busca por `client_phone_normalized` (o `client_id`+`source` si no hay teléfono), lo que permite cruzar al mismo cliente entre sesiones y fuentes distintas.
 
+### Tabla `gm_clients` (espejo del padrón de Gestion Moda)
+
+```sql
+id bigint PK,              -- id del cliente en GM (NO identity: lo dicta GM, se usa upsert)
+name text,
+phone text,                -- cellphone_number || phone_number
+phone_normalized text,     -- normalizePhone(phone)
+active boolean,
+synced_at timestamptz default now()
+```
+
+**Es la fuente de los teléfonos de las sesiones GM.** Como `/ventas/obtener` no devuelve el
+celular y `q` no sirve para buscar por nombre (ver el bug de encoding arriba), se baja el
+padrón completo paginado y el teléfono se cruza localmente por `client_id` — **0 requests a
+GM al crear una sesión**.
+
+### Tabla `gm_sync_state` (una sola fila, `id = 1`)
+
+```sql
+id smallint PK default 1,
+status text default 'idle',   -- 'idle' | 'running' | 'error'
+page int, total_pages int, clients_synced int,
+started_at timestamptz, finished_at timestamptz, error text
+```
+
+Progreso del sync del padrón, que el frontend poletea cada 3 s. Un `running` de más de
+15 minutos se considera muerto y se permite arrancar otro.
+
 ---
 
 ## API del backend (endpoints propios)
@@ -225,7 +285,9 @@ Se inserta una fila cada vez que se marca un contacto como contactado. El histor
 | `POST` | `/api/sessions` | Crear sesión GM (fetcha ventas, guarda contactos) |
 | `POST` | `/api/tn/sessions` | Crear sesión Tienda Nube (fetcha órdenes pagas) |
 | `GET` | `/api/sessions/:id/contacts` | Sesión + lista de contactos |
-| `POST` | `/api/sessions/:id/refresh-phones` | Re-busca teléfonos faltantes en GM |
+| `POST` | `/api/sessions/:id/refresh-phones` | Completa teléfonos faltantes cruzando contra `gm_clients` |
+| `POST` | `/api/clients/sync` | Dispara el sync del padrón en background; responde `202` al toque |
+| `GET` | `/api/clients/sync-status` | Progreso del sync + `total_clients` + `synced_at` + `stale` |
 | `PATCH` | `/api/sessions/:id/finish` | Archivar sesión (status → "finished") |
 | `PATCH` | `/api/contacts/:id` | Toggle contacted; al marcar, registra en `contact_logs` |
 | `GET` | `/api/contacts/:id/history` | Historial de contactos del mismo cliente |
@@ -363,6 +425,7 @@ El modal `NewSessionModal` recibe `source` como prop y adapta:
 - **Supabase por REST, sin drivers nativos:** se usa `@supabase/supabase-js` (HTTP puro) en vez de `pg` o SQLite para evitar compilación nativa y problemas de conexión directa a Postgres desde Render.
 - **Persistencia:** los datos viven en Supabase (plan free), separados del hosting. Render free no tiene disco persistente — no escribir nada en el filesystem que deba sobrevivir un deploy.
 - **IDs preservados:** la migración desde `postventa.json` conservó los IDs originales (`generated by default as identity` + `reset_id_sequences()`).
-- **Teléfonos:** la API de GM no expone `/clientes/{id}`. Se busca por nombre (`GET /clientes?q={nombre}`) y se verifica cruzando el `id`. Si el cliente no tiene teléfono en GM, queda como `null` (sin solución desde la app).
+- **Teléfonos (GM):** el celular no viene en las ventas y no hay `/clientes/{id}`, así que se mantiene un **espejo del padrón** en `gm_clients` y el cruce venta→teléfono es un JOIN local por `client_id`. El sync se dispara con el botón "Sincronizar clientes" del header, y automáticamente en background cuando el espejo pasa las 24 h. Si el cliente no tiene teléfono cargado en GM, queda `null` (sin solución desde la app).
+- **Rate limit de GM:** todas las llamadas pasan por una cola FIFO global de 50 req/min en `server.js`. El sync completo del padrón tarda ~3 min por eso; corre en background y el panel muestra el progreso.
 - **Sesiones finalizadas:** se marcan con `status: "finished"` pero los datos NO se borran. Solo desaparecen de la vista.
 - **Sin autenticación:** acceso abierto por diseño inicial. Se puede agregar en el futuro.
