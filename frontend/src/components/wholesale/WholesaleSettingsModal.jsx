@@ -1,5 +1,5 @@
-// Configuración del módulo: umbrales del semáforo de inactividad, meses de
-// histórico a sincronizar y lista de vendedores del equipo.
+// Configuración del módulo: de dónde salen los mayoristas, umbrales del semáforo
+// de inactividad, meses de histórico a sincronizar y vendedores del equipo.
 import { useState } from 'react'
 
 export default function WholesaleSettingsModal({ settings, onClose, onSaved }) {
@@ -7,6 +7,9 @@ export default function WholesaleSettingsModal({ settings, onClose, onSaved }) {
     warn_days: settings.warn_days ?? 30,
     alert_days: settings.alert_days ?? 60,
     history_months: settings.history_months ?? 12,
+    // Se edita como texto separado por comas: casi siempre es un solo id.
+    gm_client_type_ids: (settings.gm_client_type_ids || [3]).join(', '),
+    auto_import: settings.auto_import !== false,
   })
   const [sellers, setSellers] = useState(settings.sellers || [])
   const [newSeller, setNewSeller] = useState('')
@@ -28,13 +31,21 @@ export default function WholesaleSettingsModal({ settings, onClose, onSaved }) {
       return setError('El umbral rojo debe ser mayor al ámbar.')
     }
 
+    const typeIds = form.gm_client_type_ids
+      .split(',')
+      .map(s => Number(s.trim()))
+      .filter(n => Number.isFinite(n) && n > 0)
+    if (!typeIds.length) {
+      return setError('Indicá al menos un tipo de cliente de Gestion Moda (por ejemplo, 3).')
+    }
+
     setSaving(true)
     setError(null)
     try {
       const res = await fetch('/api/wholesale/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, sellers }),
+        body: JSON.stringify({ ...form, gm_client_type_ids: typeIds, sellers }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'No se pudo guardar la configuración.')
@@ -46,7 +57,9 @@ export default function WholesaleSettingsModal({ settings, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && !saving && onClose()}>
+    // El overlay no cierra: un clic al lado no puede tirar abajo lo que se estaba
+    // cargando. Se sale por la X o por Cancelar, siempre.
+    <div className="modal-overlay">
       <div className="modal">
         <div className="modal-header">
           <div className="modal-title-area">
@@ -56,6 +69,29 @@ export default function WholesaleSettingsModal({ settings, onClose, onSaved }) {
         </div>
 
         <form onSubmit={handleSubmit} className="modal-form">
+          <div className="form-group">
+            <label htmlFor="wh-types">Tipo de cliente "Mayorista" en Gestion Moda</label>
+            <input id="wh-types" type="text" inputMode="numeric" value={form.gm_client_type_ids}
+              onChange={e => set('gm_client_type_ids', e.target.value)} disabled={saving} required />
+            <small className="form-hint">
+              El id del <strong>Tipo de Cliente</strong> que se importa como mayorista: hoy es el <strong>3</strong>.
+              Va el id y no el nombre porque la API de Gestion Moda devuelve el número, no la etiqueta.
+              Si algún día hubiera más de un tipo, se separan con comas.
+            </small>
+          </div>
+
+          <div className="form-group">
+            <label className="wh-check">
+              <input type="checkbox" checked={form.auto_import}
+                onChange={e => set('auto_import', e.target.checked)} disabled={saving} />
+              Actualizar el listado de mayoristas automáticamente
+            </label>
+            <small className="form-hint">
+              Reimporta solo una vez por día al abrir el panel. Si lo desactivás, el listado se
+              actualiza únicamente con el botón "Importar de GM".
+            </small>
+          </div>
+
           <div className="form-row">
             <div className="form-group">
               <label htmlFor="wh-warn">Ámbar a partir de (días sin comprar)</label>

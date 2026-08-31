@@ -7,12 +7,15 @@ create table if not exists gm_clients (
   name text,
   phone text,                -- cellphone_number || phone_number, trimmeado
   phone_normalized text,     -- normalizePhone(phone), para cruzar con contact_logs
+  email text,
+  client_type_id int,        -- tipo de cliente en GM; el 3 es "Mayorista"
   active boolean,
   synced_at timestamptz not null default now()
 );
 
 create index if not exists gm_clients_phone_idx on gm_clients (phone_normalized);
 create index if not exists gm_clients_synced_idx on gm_clients (synced_at desc);
+create index if not exists gm_clients_type_idx on gm_clients (client_type_id);
 
 create table if not exists gm_sync_state (
   id smallint primary key default 1,

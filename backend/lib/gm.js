@@ -116,6 +116,41 @@ async function searchGmClients(q) {
   return data.data || [];
 }
 
+// Lista el padrón filtrando por tipo de cliente (client_type_id). Es lo que
+// alimenta el alta automática de mayoristas: el tipo 3 son 90 clientes, o sea
+// UNA sola página = 1 request, contra las 138 del padrón entero. Igual pagina,
+// por si el padrón de mayoristas crece.
+//
+// OJO: /clientes filtra por active=1 por defecto, así que un cliente dado de
+// baja en GM no viene acá. El import lo trata como "ya no es mayorista".
+async function fetchGmClientsByType(typeIds) {
+  const ids = (Array.isArray(typeIds) ? typeIds : [typeIds])
+    .map(Number)
+    .filter(n => Number.isFinite(n) && n > 0);
+
+  // Dedupe por id de cliente: un mismo cliente no puede repetirse entre tipos,
+  // pero el upsert revienta con "ON CONFLICT ... cannot affect row a second
+  // time" si una fila aparece dos veces, así que se indexa por id.
+  const byId = {};
+
+  for (const typeId of ids) {
+    let page = 1;
+    for (;;) {
+      const { data } = await gm.get('/clientes', {
+        params: { client_type_id: typeId, per_page: 200, page },
+      });
+
+      for (const c of data.data || []) byId[c.id] = c;
+
+      const lastPage = data.meta?.last_page || page;
+      if (!data.meta?.has_more_pages || page >= lastPage) break;
+      page++;
+    }
+  }
+
+  return Object.values(byId);
+}
+
 // Todas las ventas que matchean `search`, opcionalmente acotadas por fecha.
 // include_details va en 0 a propósito: items_sold, items_lines, total_price,
 // channel, store, budget y active vienen igual, con un payload mucho más chico.
@@ -138,4 +173,6 @@ async function fetchClientSales(search, { from, to } = {}) {
   return all;
 }
 
-module.exports = { gm, fetchAllSales, searchGmClients, fetchClientSales, foldAccents, sleep };
+module.exports = {
+  gm, fetchAllSales, searchGmClients, fetchGmClientsByType, fetchClientSales, foldAccents, sleep,
+};

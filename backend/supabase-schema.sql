@@ -58,12 +58,15 @@ create table gm_clients (
   name text,
   phone text,                -- cellphone_number || phone_number, trimmeado
   phone_normalized text,     -- normalizePhone(phone), para cruzar con contact_logs
+  email text,
+  client_type_id int,        -- tipo de cliente en GM; el 3 es "Mayorista"
   active boolean,
   synced_at timestamptz not null default now()
 );
 
 create index gm_clients_phone_idx on gm_clients (phone_normalized);
 create index gm_clients_synced_idx on gm_clients (synced_at desc);
+create index gm_clients_type_idx on gm_clients (client_type_id);
 
 -- Estado del sync del padrón: una sola fila (id = 1)
 create table gm_sync_state (

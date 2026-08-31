@@ -1,7 +1,7 @@
 // Ficha completa de un mayorista: métricas, historial de ventas de GM y timeline
 // de contactos. Permite editar los datos, actualizarlos contra GM, archivar y borrar.
 import { useState, useEffect, useCallback } from 'react'
-import { RefreshCw, Pencil, Trash2, Archive, ArchiveRestore, Plus, Check } from 'lucide-react'
+import { RefreshCw, Pencil, Trash2, Archive, ArchiveRestore, Plus, Check, AlertTriangle } from 'lucide-react'
 import ContactLogModal from './ContactLogModal.jsx'
 import ConfirmModal from '../ConfirmModal.jsx'
 import { WhatsAppIcon } from '../icons.jsx'
@@ -151,7 +151,9 @@ export default function WholesaleClientModal({ clientId, onClose, onChanged, onA
   const waUrl = client ? buildPlainWhatsAppUrl(client.phone) : null
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    // El overlay no cierra: un clic al lado no puede tirar abajo lo que se estaba
+    // editando. Se sale por la X, siempre.
+    <div className="modal-overlay">
       <div className="modal wh-modal-wide">
         <div className="modal-header">
           <div className="modal-title-area">
@@ -223,7 +225,17 @@ export default function WholesaleClientModal({ clientId, onClose, onChanged, onA
                 {client.gm_client_id
                   ? <span className="badge badge-gm">GM #{client.gm_client_id}</span>
                   : <span className="badge badge-store">Carga manual</span>}
+                {client.source === 'gm_auto' && <span className="badge badge-store">Importado por tipo</span>}
               </div>
+
+              {client.gm_type_ok === false && (
+                <div className="wh-banner">
+                  <AlertTriangle size={15} />
+                  En Gestion Moda ya no figura con el tipo <strong>Mayorista</strong> (se lo cambiaron
+                  o lo dieron de baja). Queda acá con todo su historial: archivalo si ya no le hacés
+                  seguimiento.
+                </div>
+              )}
 
               {client.notes && <p className="wh-detail-notes">{client.notes}</p>}
 

@@ -38,6 +38,7 @@ PostVenta-Online/
 │   ├── supabase-schema.sql          ← schema de tablas (ejecutar 1 vez en Supabase SQL Editor)
 │   ├── supabase-migration-gm-clients.sql  ← migración: gm_clients + gm_sync_state
 │   ├── supabase-migration-wholesale.sql   ← migración: las 5 tablas de mayoristas
+│   ├── supabase-migration-wholesale-autoimport.sql ← migración: import de mayoristas por tipo de cliente
 │   └── migrate-json-to-supabase.js  ← script one-shot: importa postventa.json a Supabase
 │
 └── frontend/
@@ -64,7 +65,7 @@ PostVenta-Online/
                 ├── WholesalePanel.jsx        ← contenedor: agenda, filtros, grilla, sync
                 ├── WholesaleCard.jsx         ← tarjeta CRM de un mayorista
                 ├── WholesaleClientModal.jsx  ← ficha: métricas, ventas, timeline
-                ├── AddWholesaleModal.jsx     ← alta: buscador del padrón GM o manual
+                ├── AddWholesaleModal.jsx     ← alta manual (secundaria): buscador del padrón GM o a mano
                 ├── ContactLogModal.jsx       ← registrar/editar un contacto
                 └── WholesaleSettingsModal.jsx ← umbrales y vendedores
 ```
@@ -217,9 +218,22 @@ Parámetros:
 |---|---|
 | `q` | Búsqueda por nombre, email, teléfono, CUIT/DNI |
 | `per_page` | Máximo 200 |
+| `client_type_id` | **Filtra por Tipo de Cliente.** El `3` es "Mayorista" |
+| `client_state_id`, `client_category_id`, `channel_id`, `kind_responsibility_id` | Otros filtros |
+| `active` | Por defecto `1` (solo activos). `0` para ver los dados de baja |
 
 **No existe `GET /clientes/{id}`.** Tampoco se puede buscar por id: `q` busca en nombre,
 email, teléfono y CUIT/DNI, pero **no** en el id (`q=240537` devuelve 0 resultados).
+
+**⚠ No hay endpoint de catálogo de tipos de cliente.** `/tipos-clientes`, `/client-types`,
+`/clientes/tipos`, `/tipos-cliente` y `/client_types` devuelven todos **404**: la respuesta
+trae `client_type_id` (un número) pero **nunca la etiqueta**. Por eso el id del tipo
+"Mayorista" es un **setting** (`wholesale_settings.gm_client_type_ids`) y no una constante.
+
+Verificado contra la API real: hay 3 tipos — `1` → 27.255 clientes (minorista),
+`2` → 321, `3` → **90 = los mayoristas**. La verificación fue cruzando la columna `#` del
+panel de GM (que es el campo `number`) de una docena de mayoristas conocidos: todos dieron
+`client_type_id: 3`.
 
 **⚠ Bug de encoding en `q`:** GM tiene los nombres guardados con un encoding roto, así que
 la búsqueda falla con ñ y acentos. Verificado: `q=MUÑOZ` → **0 resultados**;
@@ -234,11 +248,22 @@ Campos relevantes de cada cliente:
 ```json
 {
   "id": 502026,
-  "name": "Gustavo Rene Moreno",
+  "number": 21757,               // el "#" que se ve en el panel de GM, distinto del id
+  "name": "Gustavo Rene Moreno", // ojo: viene con tabs y espacios de más, hay que trimmear
+  "email": "",
   "phone_number": "",
-  "cellphone_number": "+549299 5736820"
+  "cellphone_number": "+549299 5736820",
+  "client_type_id": 3,           // 3 = Mayorista
+  "active": true
 }
 ```
+
+El payload trae bastante más (`address`, `city`, `province`, `postal_code`, `bill_*`,
+`kind_responsibility`, `price_list_id`, `commentary`, `notes`, `created_at`). El espejo
+`gm_clients` guarda solo id, nombre, teléfono, email, `client_type_id` y `active`.
+
+**Los nombres vienen en UTF-8 correcto** (`Jesús`, `Sebastián`) — el encoding roto afecta
+al parámetro `q`, no a la respuesta.
 
 ---
 
@@ -300,6 +325,8 @@ id bigint PK,              -- id del cliente en GM (NO identity: lo dicta GM, se
 name text,
 phone text,                -- cellphone_number || phone_number
 phone_normalized text,     -- normalizePhone(phone)
+email text,
+client_type_id int,        -- tipo de cliente en GM; el 3 es "Mayorista"
 active boolean,
 synced_at timestamptz default now()
 ```
@@ -327,11 +354,11 @@ Definidas en `backend/supabase-migration-wholesale.sql`. Ver la sección **Mayor
 
 | Tabla | Para qué |
 |---|---|
-| `wholesale_clients` | El mayorista. `gm_client_id` null = alta manual. Tiene `next_contact_date` / `last_contact_date` desnormalizados del último contacto, `tags text[]`, `assigned_to`, y `sales_synced_at` (null = pendiente de backfill) |
+| `wholesale_clients` | El mayorista. `gm_client_id` null = alta manual. Tiene `next_contact_date` / `last_contact_date` desnormalizados del último contacto, `tags text[]`, `assigned_to`, `sales_synced_at` (null = pendiente de backfill), `source` (`'gm_auto'` = lo trajo el import por tipo, `'manual'` = alta a mano) y `gm_type_ok` (false = ya no figura como Mayorista en GM) |
 | `wholesale_contacts` | Timeline de contactos: `contacted_at`, `note`, `outcome`, `next_contact_date`, `seller` |
 | `wholesale_sales` | Espejo de ventas de GM de los mayoristas, **solo totales**. PK = id de la venta en GM (upsert idempotente) |
 | `wholesale_sync_state` | Progreso del sync de ventas (una fila, `id = 1`). `page`/`total_pages` cuentan **meses**, no páginas |
-| `wholesale_settings` | Una fila (`id = 1`): `warn_days`, `alert_days`, `history_months`, `sellers text[]` |
+| `wholesale_settings` | Una fila (`id = 1`): `warn_days`, `alert_days`, `history_months`, `sellers text[]`, `gm_client_type_ids int[]` (tipos de GM a importar; default `{3}`) y `auto_import` |
 
 ---
 
@@ -357,7 +384,8 @@ Definidas en `backend/supabase-migration-wholesale.sql`. Ver la sección **Mayor
 | Método | Ruta | Descripción |
 |---|---|---|
 | `GET` | `/clients` | Listado con métricas, semáforo, último y próximo contacto + `settings` + `today` |
-| `POST` | `/clients` | Alta. `{ gm_client_id }` para vincular con GM, o `{ name, phone, ... }` manual. `409` si ya existe |
+| `POST` | `/clients/import` | **Trae de GM todos los del tipo Mayorista y los espeja acá.** Síncrono (~1 request a GM). Devuelve `{ imported, updated, restored, archived, flagged, total }` |
+| `POST` | `/clients` | Alta manual. `{ gm_client_id }` para vincular con GM, o `{ name, phone, ... }` a mano. `409` si ya existe |
 | `GET` | `/clients/search?q=` | Busca en `gm_clients` por nombre o teléfono; marca los ya cargados |
 | `GET` | `/clients/:id` | Ficha: cliente + métricas + ventas + timeline de contactos |
 | `PATCH` | `/clients/:id` | Editar datos o archivar (`status: 'archived'`) |
@@ -531,8 +559,10 @@ vencidos + los de hoy.
 
 ### Flujo de trabajo
 
-1. **Alta**: se busca el cliente en el espejo `gm_clients` y se lo vincula por `gm_client_id`
-   (o se lo carga a mano si no existe en GM, sin historial de ventas).
+1. **Alta**: el botón **"Importar de GM"** trae todos los clientes que en Gestion Moda tienen
+   el Tipo de Cliente "Mayorista" (ver *Import por tipo de cliente*, abajo). El alta manual
+   quedó como acción secundaria, para el mayorista que todavía no está etiquetado en GM o que
+   directamente no existe ahí.
 2. **Sync de ventas**: el botón "Sincronizar ventas" refresca todos los mayoristas; el
    botón ⟳ de cada tarjeta refresca uno solo en un par de segundos.
 3. **Seguimiento**: por cada WhatsApp se registra fecha, nota de lo que dijo, resultado
@@ -540,6 +570,45 @@ vencidos + los de hoy.
    contacto (con atajos +7d / +15d / +30d).
 4. **Agenda**: los clientes con próximo contacto vencido, de hoy o de esta semana aparecen
    arriba de todo en el panel.
+
+### Import por tipo de cliente — de dónde salen los mayoristas
+
+GM ya sabe quién es mayorista: es el campo **Tipo de Cliente**. `importWholesaleClients()`
+(en `wholesale.js`) lista los clientes de ese tipo y espeja el padrón acá, así el listado se
+mantiene solo sin cargar de a uno.
+
+**Cuesta 1 request a GM**: los 90 mayoristas entran en una sola página de `per_page=200`,
+contra las 138 páginas del padrón entero. Por eso el endpoint es **síncrono** — no hace falta
+una tabla de progreso como la del sync de ventas. El helper es `fetchGmClientsByType()` en
+`lib/gm.js` (pagina igual, por si crecen).
+
+Se dispara de tres formas: el botón **"Importar de GM"** del panel, automáticamente en
+background desde `GET /clients` cuando pasaron 24 h del último import (si `auto_import` está
+activo), y nunca dos a la vez — lo cuida la bandera de módulo `importInFlight`.
+
+**Reglas de convivencia — importan más que el mecanismo:**
+
+| Situación | Qué hace |
+|---|---|
+| Está en GM, no en la tabla | **Alta** con `source: 'gm_auto'` y `sales_synced_at: null` (backfill pendiente). Si hubo altas, el import dispara además el sync de ventas en background |
+| Está en los dos lados | Actualiza **solo** nombre / teléfono / email si GM trae valor y difiere. **Nunca toca** `assigned_to`, `tags`, `notes` ni la agenda: son del usuario |
+| Ya no figura en GM, sin contactos | Se **archiva** solo y queda `gm_type_ok = false` |
+| Ya no figura en GM, con contactos | **Queda activo** con `gm_type_ok = false`: la tarjeta muestra el cartel "Ya no es Mayorista en GM" y decide el usuario |
+| Volvió a figurar en GM | Si lo había archivado un import previo, se **reactiva** |
+| `source = 'manual'` | **Nunca se toca**: ni se archiva ni se le pisan los datos |
+
+**Nada se borra jamás.** Archivar es reversible desde el panel.
+
+Un cliente **dado de baja en GM** también desaparece del import: `/clientes` filtra por
+`active=1` por defecto. Cae en las mismas reglas de arriba.
+
+⚠ El id del tipo vive en `wholesale_settings.gm_client_type_ids` (default `{3}`) y se edita
+desde ⚙ Configuración. **No hardcodearlo**: la API devuelve el número pero no la etiqueta, y
+no hay endpoint de catálogo de tipos para resolverla.
+
+⚠ `upsertRows()` hardcodea `onConflict: 'id'`, y la clave natural de un mayorista es
+`gm_client_id`. Por eso las altas van con `insertRows()` después de filtrar contra lo que ya
+está, en **una sola** query `.in()` — no con un `maybeSingle()` por cliente.
 
 ### `refreshClientFromGm()` — el núcleo de todo
 
@@ -597,6 +666,8 @@ El semáforo compara los días sin comprar contra `warn_days` / `alert_days` de
 - **Rate limit de GM:** todas las llamadas pasan por una cola FIFO global de 50 req/min definida en `lib/gm.js`. El sync completo del padrón tarda ~3 min por eso; corre en background y el panel muestra el progreso.
 - **Sesiones finalizadas:** se marcan con `status: "finished"` pero los datos NO se borran. Solo desaparecen de la vista.
 - **Ventas de mayoristas:** se traen cliente por cliente con `GET /ventas?search=<nombre>` (~2 requests c/u) en vez de escanear meses de ventas de todo el negocio. El costo escala con la cantidad de mayoristas, no con el volumen de ventas. Se guardan **solo totales** por venta — `items_sold` y `total_price` — sin líneas de producto.
+- **Mayoristas por tipo de cliente, no a mano:** el padrón de mayoristas sale del campo Tipo de Cliente de GM (1 request), no de cargarlos de a uno. El alta manual quedó como acción secundaria, para el que todavía no está etiquetado en GM. Las dos convivien gracias a `wholesale_clients.source`: el import **nunca** toca a los manuales.
+- **El import no borra, archiva:** el que deja de ser mayorista en GM se archiva solo **si no tiene contactos registrados**; si tiene seguimiento, queda activo con un cartel para que decida el usuario. Archivar es reversible; el import ni siquiera archiva a los cargados a mano.
 - **Historial separado:** el módulo de mayoristas tiene su propio timeline (`wholesale_contacts`) y **no cruza** con los `contact_logs` de las campañas de PostVenta: son dos tipos de contacto distintos y mezclarlos ensuciaba el seguimiento personal.
 - **Helpers compartidos en el frontend:** la normalización de teléfonos y el formateo de fechas/montos viven en `src/utils/` y los importan tanto PostVenta como Mayoristas, para no tener tres copias divergentes de la misma lógica.
 - **Iconos con `lucide-react`:** se importan de a uno (`import { RefreshCw } from 'lucide-react'`) para que el tree-shaking deje afuera el resto — los ~20 que usa el panel pesan ~2,6 kB gzip. Reemplazaron a los emojis, que se veían distinto en cada sistema operativo. Lo único a mano es el glifo de WhatsApp en `components/icons.jsx`, porque lucide no incluye logos de marcas. La clase `.icon-spin` de `App.css` hace girar cualquier icono que indique "en curso".

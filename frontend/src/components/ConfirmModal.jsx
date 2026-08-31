@@ -15,7 +15,9 @@ export default function ConfirmModal({
   onCancel,
 }) {
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && !busy && onCancel()}>
+    // El overlay no cierra: una confirmación de algo destructivo se responde a
+    // propósito, con Cancelar o con la X.
+    <div className="modal-overlay">
       <div className="modal confirm-modal">
         <div className="modal-header">
           <div className="modal-title-area">

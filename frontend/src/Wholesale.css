@@ -194,6 +194,103 @@
   gap: 14px;
 }
 
+/* ── Secciones del listado ─────────────────────────────────────────────────── */
+/* En "Todos" la grilla se parte por el semáforo: sin esto, 90 tarjetas de estados
+   distintos caen mezcladas en orden alfabético y no hay por dónde empezar. */
+.wh-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wh-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--wh-none);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  box-shadow: var(--shadow);
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.wh-sec-head:hover { box-shadow: var(--shadow-md); }
+
+.wh-sec-head:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.wh-sec-warn  { border-left-color: var(--wh-warn); }
+.wh-sec-alert { border-left-color: var(--wh-alert); }
+.wh-sec-ok    { border-left-color: var(--wh-ok); }
+.wh-sec-none  { border-left-color: var(--wh-none); }
+
+.wh-sec-caret { color: var(--text-light); flex-shrink: 0; }
+
+.wh-sec-icon { flex-shrink: 0; }
+.wh-sec-warn  .wh-sec-icon { color: var(--wh-warn); }
+.wh-sec-alert .wh-sec-icon { color: var(--wh-alert); }
+.wh-sec-ok    .wh-sec-icon { color: var(--wh-ok); }
+.wh-sec-none  .wh-sec-icon { color: var(--text-light); }
+
+.wh-sec-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* La regla del grupo, escrita al lado del título: el usuario no tiene por qué
+   acordarse de qué significa "en riesgo". */
+.wh-sec-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.wh-sec-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: background .15s, border-color .15s;
+}
+
+.wh-sec-more:hover {
+  background: var(--primary-light);
+  border-color: var(--primary);
+}
+
+.wh-sec-more:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Selector de orden, pegado a los filtros. */
+.wh-sort {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.wh-sort-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 /* Toda la tarjeta abre la ficha; los controles internos cortan la propagación. */
 .wh-card {
   display: flex;
@@ -335,6 +432,23 @@
   background: var(--bg);
   color: var(--text-muted);
   border-color: var(--border);
+}
+
+/* Resumen del import de mayoristas: es una confirmación, no una advertencia. */
+.wh-banner-ok {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #86efac;
+}
+
+/* El que dejó de tener el tipo Mayorista en GM. No es una baja: sigue con todo
+   su historial, el cartel es para que el usuario decida si lo archiva. */
+.wh-chip-untyped {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--wh-warn-bg);
+  color: #92400e;
 }
 
 .wh-chip-ok    { background: #dcfce7; color: #166534; }
@@ -655,6 +769,241 @@
 }
 
 .wh-seller-add input { flex: 1; }
+
+/* Checkbox con su etiqueta al lado, en vez del label arriba del campo. */
+.wh-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.wh-check input { width: auto; margin: 0; }
+
+/* Alternativa secundaria del empty state, debajo del botón principal. */
+.wh-empty-alt { margin-top: 10px; }
+
+/* ── Guía de uso ───────────────────────────────────────────────────────────── */
+/* Es un modal de lectura, no un formulario: más ancho que el resto y con una
+   medida de línea acotada para que el texto no se estire a lo ancho. */
+.wh-guide-modal { max-width: 780px; }
+
+.wh-guide-body { padding: 0 24px 24px; }
+
+.wh-guide-lead {
+  font-size: 15px;
+  color: var(--text-muted);
+  max-width: 62ch;
+}
+
+.wh-guide-phase { margin-top: 28px; }
+
+.wh-guide-phase > h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+}
+
+.wh-guide-phase > h3 svg { color: var(--primary); flex-shrink: 0; }
+
+.wh-guide-cadence {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-light);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+.wh-guide-intro {
+  margin-top: 12px;
+  font-size: 13.5px;
+  color: var(--text-muted);
+  max-width: 62ch;
+}
+
+/* Los pasos van numerados porque son una secuencia: el orden importa. */
+.wh-guide-steps {
+  list-style: none;
+  counter-reset: wh-step;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.wh-guide-steps > li {
+  counter-increment: wh-step;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.wh-guide-steps > li::before {
+  content: counter(wh-step);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  padding-top: 1px;
+}
+
+.wh-guide-step-body { max-width: 62ch; }
+.wh-guide-step-body > * + * { margin-top: 8px; }
+
+.wh-guide-step-body h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.wh-guide-step-body p {
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+
+.wh-guide-step-body strong { color: var(--text); font-weight: 600; }
+
+/* Nombre literal de un control: distingue "apretá esto exactamente" de la prosa. */
+.wh-kbd {
+  display: inline-flex;
+  align-items: center;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: .85em;
+  font-weight: 500;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 6px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.wh-kbd-primary {
+  background: var(--primary-light);
+  border-color: #bfdbfe;
+  color: var(--primary-hover);
+  font-weight: 600;
+}
+
+.wh-guide-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  border-left: 3px solid var(--border);
+  padding: 9px 0 9px 12px;
+}
+
+.wh-guide-note svg { flex-shrink: 0; margin-top: 2px; }
+.wh-guide-note-warn { border-left-color: var(--wh-warn); color: #92400e; }
+.wh-guide-note-warn svg { color: var(--wh-warn); }
+.wh-guide-note-key { border-left-color: var(--primary); color: var(--primary-hover); }
+
+.wh-guide-engine {
+  margin-top: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--primary);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+
+.wh-guide-fields > div {
+  display: grid;
+  grid-template-columns: minmax(115px, 165px) minmax(0, 1fr);
+  gap: 4px 16px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+
+.wh-guide-fields > div:first-child { border-top: none; }
+
+.wh-guide-fields dt {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wh-guide-fields dd {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.wh-guide-engine .wh-guide-note { margin-top: 14px; }
+
+/* Las tablas scrollean adentro de su caja: el modal nunca se va de ancho. */
+.wh-guide-table-wrap {
+  overflow-x: auto;
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.wh-guide-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.wh-guide-table th {
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-light);
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.wh-guide-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  vertical-align: top;
+}
+
+.wh-guide-table tr:last-child td { border-bottom: none; }
+.wh-guide-control { color: var(--text); font-weight: 500; white-space: nowrap; }
+
+.wh-guide-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wh-guide-closer {
+  margin-top: 28px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13.5px;
+  color: var(--text-muted);
+  max-width: 62ch;
+}
+
+@media (max-width: 640px) {
+  .wh-guide-steps > li { grid-template-columns: 1fr; gap: 6px; }
+  .wh-guide-fields > div { grid-template-columns: 1fr; gap: 2px; }
+  .wh-guide-cadence { margin-left: 0; }
+}
 
 @media (max-width: 640px) {
   .wh-grid { grid-template-columns: 1fr; }

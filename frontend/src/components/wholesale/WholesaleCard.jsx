@@ -86,6 +86,14 @@ export default function WholesaleCard({ client, today, onOpen, onLog, onRefreshe
         <span className="wh-card-name">{client.name}</span>
 
         <div className="wh-card-head-right">
+          {client.gm_type_ok === false && (
+            <span
+              className="wh-chip wh-chip-untyped"
+              title="En Gestion Moda le cambiaron el tipo de cliente o lo dieron de baja. Sigue acá con todo su historial: archivalo si ya no lo seguís."
+            >
+              <AlertTriangle size={12} /> Ya no es Mayorista en GM
+            </span>
+          )}
           <span className={`wh-chip ${archived ? 'wh-chip-archived' : `wh-chip-${client.alert_status}`}`}>
             {archived ? 'Archivado' : STATUS_LABEL[client.alert_status]}
           </span>

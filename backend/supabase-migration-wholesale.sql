@@ -17,6 +17,8 @@ create table wholesale_clients (
   last_contact_date date,                  -- idem, para no recalcular en cada listado
   sales_synced_at timestamptz,             -- null = pendiente de backfill de ventas
   status text not null default 'active',   -- 'active' | 'archived'
+  source text not null default 'manual',   -- 'gm_auto' = import por tipo | 'manual' = alta a mano
+  gm_type_ok boolean not null default true,-- false = ya no figura como Mayorista en GM
   created_at timestamptz not null default now()
 );
 
@@ -66,6 +68,8 @@ create table wholesale_sync_state (
   range_from date,
   range_to date,
   last_synced_to date,                   -- hasta qué fecha llegó el último sync exitoso
+  clients_imported_at timestamptz,       -- última corrida del import de mayoristas por tipo
+  clients_imported int not null default 0,
   started_at timestamptz,
   finished_at timestamptz,
   error text
@@ -79,7 +83,9 @@ create table wholesale_settings (
   warn_days int not null default 30,     -- semáforo ámbar: días sin comprar
   alert_days int not null default 60,    -- semáforo rojo
   history_months int not null default 12,
-  sellers text[] not null default '{}'
+  sellers text[] not null default '{}',
+  gm_client_type_ids int[] not null default '{3}',  -- tipos de cliente de GM a importar; el 3 es "Mayorista"
+  auto_import boolean not null default true         -- reimportar solo cada 24 h
 );
 
 insert into wholesale_settings (id) values (1);

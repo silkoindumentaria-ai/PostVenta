@@ -6,13 +6,19 @@
 // Las ventas salen de un espejo local (wholesale_sales) que se llena consultando
 // GM cliente por cliente con /ventas?search=<nombre> — ver lib/gm.js.
 const express = require('express');
-const { supabase, fetchAllRows, upsertRows, normalizePhone } = require('./lib/db');
-const { searchGmClients, fetchClientSales, foldAccents } = require('./lib/gm');
+const { supabase, fetchAllRows, insertRows, upsertRows, normalizePhone } = require('./lib/db');
+const { searchGmClients, fetchGmClientsByType, fetchClientSales, foldAccents } = require('./lib/gm');
 
 const router = express.Router();
 
-const SYNC_STUCK_MS = 20 * 60 * 1000;   // un 'running' más viejo que esto se da por muerto
+// Un 'running' más viejo que esto se da por muerto. Tiene que cubrir el backfill
+// inicial completo: son ~2 requests por cliente a 50 req/min, o sea ~4 min para
+// los 90 mayoristas de hoy, con margen de sobra para cuando crezcan.
+const SYNC_STUCK_MS = 45 * 60 * 1000;
 const OUTCOMES = ['compro', 'va_a_comprar', 'pidio_info', 'no_contesta', 'no_interesa'];
+
+// Cada cuánto se reimporta el padrón de mayoristas solo, si auto_import está activo.
+const IMPORT_STALE_MS = 24 * 60 * 60 * 1000;
 
 // ── Helpers de fecha (todo en 'YYYY-MM-DD', sin horas, para evitar líos de TZ) ─
 const todayStr = () => new Date().toISOString().split('T')[0];
@@ -29,7 +35,19 @@ function daysBetween(fromStr, toStr) {
 }
 
 // ── Configuración del módulo (una sola fila, id = 1) ──────────────────────────
-const DEFAULT_SETTINGS = { id: 1, warn_days: 30, alert_days: 60, history_months: 12, sellers: [] };
+// gm_client_type_ids: qué "Tipo de Cliente" de GM cuenta como mayorista. Es un
+// setting y no una constante porque la API NO expone la etiqueta: /clientes
+// devuelve client_type_id (un número) y no hay endpoint de catálogo de tipos.
+// Verificado contra la API real: hoy el 3 son los 90 mayoristas.
+const DEFAULT_SETTINGS = {
+  id: 1,
+  warn_days: 30,
+  alert_days: 60,
+  history_months: 12,
+  sellers: [],
+  gm_client_type_ids: [3],
+  auto_import: true,
+};
 
 async function getSettings() {
   const { data, error } = await supabase
@@ -38,7 +56,14 @@ async function getSettings() {
     .eq('id', 1)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return data || { ...DEFAULT_SETTINGS };
+  // Los defaults se mergean para que las columnas nuevas no queden undefined si
+  // todavía no se corrió la migración.
+  const row = data || {};
+  const settings = { ...DEFAULT_SETTINGS, ...row };
+  if (!Array.isArray(settings.gm_client_type_ids) || !settings.gm_client_type_ids.length) {
+    settings.gm_client_type_ids = DEFAULT_SETTINGS.gm_client_type_ids;
+  }
+  return settings;
 }
 
 // ── Estado del sync de ventas (una sola fila, id = 1) ─────────────────────────
@@ -183,12 +208,14 @@ async function refreshClientFromGm(client, settings) {
 
     // El espejo del padrón se actualiza también: así se beneficia el resto del
     // panel (refresh-phones de PostVenta, el buscador de alta de mayoristas).
-    // gm_clients no tiene columna de email, por eso solo va el teléfono.
+    // No se manda client_type_id a propósito: el upsert solo pisa las columnas
+    // que van en el payload, y acá no lo tenemos.
     await upsertRows('gm_clients', [{
       id: gmId,
       name: gmContact.name,
       phone: gmContact.phone,
       phone_normalized: normalizePhone(gmContact.phone),
+      email: gmContact.email,
       active: gmContact.active,
       synced_at: syncedAt,
     }]);
@@ -241,6 +268,151 @@ async function refreshClientFromGm(client, settings) {
   if (markErr) throw new Error(markErr.message);
 
   return result;
+}
+
+// ── Import de mayoristas por tipo de cliente de GM ────────────────────────────
+// GM ya sabe quién es mayorista: es el campo "Tipo de Cliente". En vez de cargar
+// los mayoristas a mano de a uno, se listan los del tipo configurado y se
+// espeja el padrón acá. Cuesta 1 request a GM (el tipo 3 entra en una sola
+// página de 200) y corre en un par de segundos, así que es síncrono.
+//
+// Reglas de convivencia con las altas manuales:
+//   • source 'manual' NUNCA se toca: ni se archiva ni se le pisan los datos.
+//   • Los campos del usuario (assigned_to, tags, notes, agenda) no se tocan nunca.
+//   • El que deja de figurar como mayorista en GM se archiva solo si no tiene
+//     ningún contacto registrado; si tiene seguimiento, queda activo y marcado
+//     con gm_type_ok = false para que el panel lo muestre con un cartel.
+// Nada se borra jamás: archivar es reversible desde el panel.
+
+function gmClientRow(c, syncedAt) {
+  const phone = (c.cellphone_number || c.phone_number || '').trim() || null;
+  return {
+    id: c.id,
+    name: (c.name || '').trim() || null,   // GM devuelve nombres con tabs y espacios de más
+    phone,
+    phone_normalized: normalizePhone(phone),
+    email: (c.email || '').trim() || null,
+    client_type_id: c.client_type_id ?? null,
+    active: c.active !== false,
+    synced_at: syncedAt,
+  };
+}
+
+// Evita que dos requests simultáneos disparen dos imports a la vez. Alcanza con
+// una bandera de módulo: el import dura segundos y corre en una sola instancia.
+let importInFlight = false;
+
+async function importWholesaleClients() {
+  const settings = await getSettings();
+  const syncedAt = new Date().toISOString();
+
+  const gmClients = await fetchGmClientsByType(settings.gm_client_type_ids);
+  const mirrorRows = gmClients.map(c => gmClientRow(c, syncedAt)).filter(r => r.name);
+
+  // El espejo del padrón se refresca de paso, sin esperar al sync completo.
+  if (mirrorRows.length) await upsertRows('gm_clients', mirrorRows);
+
+  // Todos los mayoristas vinculados a GM, archivados incluidos: una sola query.
+  const linked = await fetchAllRows(() =>
+    supabase.from('wholesale_clients')
+      .select('id, gm_client_id, name, phone, email, status, source, gm_type_ok')
+      .not('gm_client_id', 'is', null)
+  );
+
+  const existingBy = new Map(linked.map(c => [Number(c.gm_client_id), c]));
+  const inGm = new Set(mirrorRows.map(r => Number(r.id)));
+
+  const result = { imported: 0, updated: 0, archived: 0, flagged: 0, restored: 0, total: mirrorRows.length };
+
+  // ── Altas: están en GM y no en la tabla ─────────────────────────────────────
+  const nuevos = mirrorRows
+    .filter(r => !existingBy.has(Number(r.id)))
+    .map(r => ({
+      gm_client_id: r.id,
+      name: r.name,
+      phone: r.phone,
+      phone_normalized: r.phone_normalized,
+      email: r.email,
+      tags: [],
+      source: 'gm_auto',
+      gm_type_ok: true,
+      sales_synced_at: null,   // null = pendiente de backfill de ventas
+      status: 'active',
+    }));
+
+  // insertRows y no upsertRows: upsertRows hardcodea onConflict 'id', y la clave
+  // natural acá es gm_client_id.
+  if (nuevos.length) await insertRows('wholesale_clients', nuevos);
+  result.imported = nuevos.length;
+
+  // ── Actualizaciones: están en los dos lados ─────────────────────────────────
+  for (const row of mirrorRows) {
+    const local = existingBy.get(Number(row.id));
+    if (!local) continue;
+
+    const patch = {};
+    if (row.name && row.name !== local.name) patch.name = row.name;
+    if (row.phone && row.phone !== local.phone) {
+      patch.phone = row.phone;
+      patch.phone_normalized = row.phone_normalized;
+    }
+    if (row.email && row.email !== local.email) patch.email = row.email;
+    if (local.gm_type_ok === false) patch.gm_type_ok = true;
+
+    // Volvió a figurar como mayorista: si lo había archivado un import previo,
+    // se reactiva. Un archivado a mano por el usuario no se toca.
+    if (local.status === 'archived' && local.source === 'gm_auto' && local.gm_type_ok === false) {
+      patch.status = 'active';
+      result.restored++;
+    }
+
+    if (!Object.keys(patch).length) continue;
+
+    const { error } = await supabase.from('wholesale_clients').update(patch).eq('id', local.id);
+    if (error) throw new Error(error.message);
+    result.updated++;
+  }
+
+  // ── Bajas: los que el import había traído y GM ya no devuelve ───────────────
+  const bajas = linked.filter(c =>
+    c.source === 'gm_auto' && c.status === 'active' && !inGm.has(Number(c.gm_client_id))
+  );
+
+  for (const c of bajas) {
+    // Con seguimiento cargado no se archiva solo: se marca y decide el usuario.
+    const { count, error: countErr } = await supabase
+      .from('wholesale_contacts')
+      .select('id', { count: 'exact', head: true })
+      .eq('wholesale_client_id', c.id);
+    if (countErr) throw new Error(countErr.message);
+
+    const patch = count ? { gm_type_ok: false } : { gm_type_ok: false, status: 'archived' };
+    const { error } = await supabase.from('wholesale_clients').update(patch).eq('id', c.id);
+    if (error) throw new Error(error.message);
+
+    if (count) result.flagged++;
+    else result.archived++;
+  }
+
+  await setSyncState({ clients_imported_at: syncedAt, clients_imported: result.total });
+
+  console.log(
+    `Import de mayoristas: ${result.total} en GM — ${result.imported} nuevos, ` +
+    `${result.updated} actualizados, ${result.archived} archivados, ${result.flagged} marcados.`
+  );
+
+  return result;
+}
+
+// Corre el import cuidando que no haya dos a la vez. Devuelve null si ya hay uno.
+async function runImportGuarded() {
+  if (importInFlight) return null;
+  importInFlight = true;
+  try {
+    return await importWholesaleClients();
+  } finally {
+    importInFlight = false;
+  }
 }
 
 // Refresca todos los mayoristas activos, uno por uno. Asume que claimSync() ya
@@ -376,8 +548,26 @@ async function refreshContactFields(clientId) {
 
 // ── Clientes ──────────────────────────────────────────────────────────────────
 
-// Ojo con el orden: /clients/search tiene que declararse ANTES que /clients/:id,
-// si no Express matchea :id = 'search'.
+// Ojo con el orden: /clients/search y /clients/import tienen que declararse ANTES
+// que /clients/:id, si no Express matchea :id = 'search'.
+
+// Trae de GM todos los clientes del tipo "Mayorista" y los espeja acá. Es
+// síncrono porque cuesta 1 request a GM y corre en segundos. Si hubo altas,
+// dispara además el backfill de ventas en background: el panel ya poletea
+// /sales/sync-status, así que muestra el avance sin cambios.
+router.post('/clients/import', async (_req, res) => {
+  try {
+    const result = await runImportGuarded();
+    if (!result) return res.status(202).json({ already_running: true });
+
+    const sync_started = result.imported > 0 ? await startSalesSyncInBackground() : false;
+    res.json({ ...result, sync_started });
+  } catch (err) {
+    console.error('wholesale import:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/clients/search', async (req, res) => {
   try {
     // Los metacaracteres de PostgREST (coma y paréntesis) romperían el .or().
@@ -420,8 +610,9 @@ router.get('/clients', async (req, res) => {
     const includeArchived = req.query.archived === '1';
     const today = todayStr();
 
-    const [settings, clients, sales, contacts] = await Promise.all([
+    const [settings, syncState, clients, sales, contacts] = await Promise.all([
       getSettings(),
+      getSyncState(),
       fetchAllRows(() => {
         const q = supabase.from('wholesale_clients').select('*');
         return (includeArchived ? q : q.eq('status', 'active')).order('name');
@@ -452,7 +643,19 @@ router.get('/clients', async (req, res) => {
       };
     });
 
-    res.json({ clients: out, settings, today });
+    // El padrón de mayoristas se reimporta solo cuando pasó un día, igual que el
+    // espejo de clientes de PostVenta. Va en background y sin await: la respuesta
+    // sale con los datos que ya había y el próximo refresco muestra los nuevos.
+    const lastImport = syncState.clients_imported_at;
+    const importStale = !lastImport || Date.now() - new Date(lastImport).getTime() > IMPORT_STALE_MS;
+    let import_started = false;
+
+    if (settings.auto_import !== false && importStale && !importInFlight) {
+      import_started = true;
+      runImportGuarded().catch(err => console.error('auto-import mayoristas:', err.message));
+    }
+
+    res.json({ clients: out, settings, today, last_import_at: lastImport || null, import_started });
   } catch (err) {
     console.error('wholesale clients:', err.message);
     res.status(500).json({ error: err.message });
@@ -522,6 +725,7 @@ router.post('/clients', async (req, res) => {
         notes: (notes || '').trim() || null,
         sales_synced_at: null,   // null = pendiente de backfill de ventas
         status: 'active',
+        source: 'manual',        // el import por tipo no toca a los cargados a mano
       })
       .select()
       .single();
@@ -845,6 +1049,7 @@ router.get('/sales/sync-status', async (_req, res) => {
       ...state,
       pending_backfill: pendingRes.count || 0,
       total_sales: countRes.count || 0,
+      last_import_at: state.clients_imported_at || null,
     });
   } catch (err) {
     console.error('wholesale sync-status:', err.message);
@@ -876,6 +1081,21 @@ router.patch('/settings', async (req, res) => {
         ? [...new Set(req.body.sellers.map(s => String(s).trim()).filter(Boolean))]
         : [];
     }
+
+    // Qué tipo(s) de cliente de GM se importan como mayoristas. No puede quedar
+    // vacío: sin tipos el import archivaría a todo el mundo.
+    if (req.body.gm_client_type_ids !== undefined) {
+      const raw = Array.isArray(req.body.gm_client_type_ids)
+        ? req.body.gm_client_type_ids
+        : [req.body.gm_client_type_ids];
+      const ids = [...new Set(raw.map(Number).filter(n => Number.isFinite(n) && n > 0).map(Math.round))];
+      if (!ids.length) {
+        return res.status(400).json({ error: 'Indicá al menos un tipo de cliente de Gestion Moda.' });
+      }
+      patch.gm_client_type_ids = ids;
+    }
+
+    if (req.body.auto_import !== undefined) patch.auto_import = !!req.body.auto_import;
 
     // Los umbrales que no vengan en el patch se validan contra los actuales.
     const current = await getSettings();

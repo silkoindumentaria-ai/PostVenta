@@ -66,7 +66,9 @@ export default function AddWholesaleModal({ sellers, onClose, onCreated }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && !saving && onClose()}>
+    // El overlay no cierra: un clic al lado no puede tirar abajo lo que se estaba
+    // cargando. Se sale por la X o por Cancelar, siempre.
+    <div className="modal-overlay">
       <div className="modal">
         <div className="modal-header">
           <div className="modal-title-area">

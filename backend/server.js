@@ -69,6 +69,8 @@ function clientRowFromGm(c) {
     name: (c.name || '').trim() || null,
     phone,
     phone_normalized: normalizePhone(phone),
+    email: (c.email || '').trim() || null,
+    client_type_id: c.client_type_id ?? null,   // el 3 es "Mayorista"; lo usa el módulo de mayoristas
     active: c.active !== false,
     synced_at: new Date().toISOString(),
   };
